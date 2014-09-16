@@ -1,0 +1,7 @@
+*~
+*.pyc
+
+/dist/
+/libtcd.egg-info/
+
+/py27/
