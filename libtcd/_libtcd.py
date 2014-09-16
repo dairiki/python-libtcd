@@ -110,6 +110,9 @@ def _check_index(result, func, args):
     return args
 
 # FIXME: dump_tide_record
+dump_tide_record = _lib.dump_tide_record
+dump_tide_record.restype = None
+dump_tide_record.argtypes = (POINTER(TIDE_RECORD),)
 
 # String tables
 _get_string_t = CFUNCTYPE(c_char_p, c_int32)
@@ -127,20 +130,17 @@ for name in ('country',
     locals()['find_' + name] = _find_string_t(('find_' + name, _lib))
 
 _add_string_t = CFUNCTYPE(c_int32, c_char_p, POINTER(DB_HEADER_PUBLIC))
-_add_string_paramflags = ((1, 'name'), (5, 'db'))
+_add_string_paramflags = ((1, 'name'), (1, 'db', None))
 for name in 'country', 'tzfile', 'restriction', 'datum', 'legalese':
     locals()['add_' + name] = _add_string_t(
         ('add_' + name, _lib), _add_string_paramflags)
     locals()['find_or_add_' + name] = _add_string_t(
         ('find_or_add_' + name, _lib), _add_string_paramflags)
 
-
-
 _get_speed_t = CFUNCTYPE(c_float64, c_int32)
 _set_speed_t = CFUNCTYPE(None, c_int32, c_float64)
 get_speed = _get_speed_t(('get_speed', _lib))
 set_speed = _set_speed_t(('set_speed', _lib))
-
 
 _get_factor_t = CFUNCTYPE(c_float32, c_int32, c_int32)
 _set_factor_t = CFUNCTYPE(None, c_int32, c_int32, c_float32)
@@ -149,8 +149,9 @@ set_equilibrium = _set_factor_t(('set_equilibrium', _lib))
 get_node_factor = _get_factor_t(('get_node_factor', _lib))
 set_node_factor = _set_factor_t(('set_node_factor', _lib))
 
-# FIXME: get_equilibriums
-# FIXME: get_node_factors
+_get_factors_t = CFUNCTYPE(POINTER(c_float32), c_int32)
+get_equilibriums = _get_factors_t(('get_equilibriums', _lib))
+get_node_factors = _get_factors_t(('get_node_factors', _lib))
 
 _get_time_t = CFUNCTYPE(c_int32, c_char_p)
 get_time = _get_time_t(('get_time', _lib))
@@ -230,20 +231,20 @@ read_tide_record.errcheck = _check_read_tide_record
 _add_tide_record_t = CFUNCTYPE(c_bool,
                                POINTER(TIDE_RECORD), POINTER(DB_HEADER_PUBLIC))
 add_tide_record = _add_tide_record_t(('add_tide_record', _lib),
-                                     ((1, 'rec'), (5, 'db')))
+                                     ((1, 'rec'), (1, 'db', None)))
 add_tide_record.errcheck = _check_bool
 
 _update_tide_record_t = CFUNCTYPE(c_bool,
                                   c_int32, POINTER(TIDE_RECORD),
                                   POINTER(DB_HEADER_PUBLIC))
-update_tide_record = _update_tide_record_t(('update_tide_record', _lib),
-                                           ((1, 'num'), (1, 'rec'), (5, 'db')))
+update_tide_record = _update_tide_record_t(
+    ('update_tide_record', _lib), ((1, 'num'), (1, 'rec'), (1, 'db', None)))
 update_tide_record.errcheck = _check_bool
 
 _delete_tide_record_t = CFUNCTYPE(c_bool,
                                   c_int32, POINTER(DB_HEADER_PUBLIC))
 delete_tide_record = _delete_tide_record_t(('delete_tide_record', _lib),
-                                           ((1, 'num'), (5, 'db')))
+                                           ((1, 'num'), (1, 'db', None)))
 delete_tide_record.errcheck = _check_bool
 
 infer_constituents = _lib.infer_constituents

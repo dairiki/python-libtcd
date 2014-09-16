@@ -39,3 +39,20 @@ def test_get_restrictions(test_tcd):
     assert restrictions == ['Public Domain',
                             'DoD/DoD Contractors Only',
                             'Non-commercial use only']
+
+def test_get_country(test_tcd):
+    from libtcd._libtcd import get_country
+    countries = map(get_country, range(test_tcd.countries))
+    assert countries[0] == 'Unknown'
+    assert 'United States' in countries
+
+def test_get_legalese(test_tcd):
+    from libtcd._libtcd import get_legalese
+    legaleses = map(get_legalese, range(test_tcd.legaleses))
+    assert legaleses == ['NULL']
+
+def test_get_datum(test_tcd):
+    from libtcd._libtcd import get_datum
+    datums = map(get_datum, range(test_tcd.datum_types))
+    assert datums[0] == 'Unknown'
+    assert 'Mean Lower Low Water' in datums
