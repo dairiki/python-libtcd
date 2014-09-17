@@ -5,6 +5,8 @@ from __future__ import absolute_import
 
 from ctypes import *
 
+ENCODING = 'iso-8859-1'                 # all strings encoded iso-8859-1
+
 assert sizeof(c_float) == 4
 c_float32 = c_float
 assert sizeof(c_double) == 8

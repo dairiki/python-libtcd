@@ -3,14 +3,95 @@
 """
 from __future__ import absolute_import
 
+from collections import namedtuple, OrderedDict, Mapping, Sequence
+from ctypes import c_char_p, POINTER
 import datetime
+from functools import partial
+from itertools import islice, izip
 from operator import attrgetter
 from threading import Lock
 
 from six import text_type
 
 from . import _libtcd
-from ._libtcd import c_char_p, c_float32, c_float64, cast, pointer, POINTER
+
+class _string_table(Sequence):
+    def __init__(self, name, len_attr, tcd_header):
+        self._name = name
+        self._len_attr = len_attr
+        self._header = tcd_header
+
+    def __len__(self):
+        return getattr(self._header, self._len_attr)
+
+    def __getitem__(self, i):
+        if i < 0 or i >= len(self):
+            raise IndexError(i)
+        getter = getattr(_libtcd, 'get_%s' % self._name)
+        return text_type(getter(i), _libtcd.ENCODING)
+
+    def index(self, value):
+        finder = getattr(_libtcd, 'find_%s' % self._name)
+        i = finder(bytes_(value))
+        if i < 0:
+            raise ValueError(value)
+        return i
+
+    def __contains__(self, value):
+        try:
+            self.index(value)
+        except ValueError:
+            return False
+        return True
+
+class _addable_string_table(_string_table):
+    # XXX: not needed?
+    def add(self, value):
+        adder = getattr(_libtcd, 'add_%s' % self._name)
+        return adder(bytes_(value), self._header)
+
+    def find_or_add(self, value):
+        find_or_adder = getattr(_libtcd, 'find_or_add_%s' % self._name)
+        return find_or_adder(bytes_(value), self._header)
+
+_STRING_TABLES = {
+    'restrictions': partial(_addable_string_table,
+                            'restriction', 'restriction_types'),
+    'tzfiles': partial(_addable_string_table, 'tzfile', 'tzfiles'),
+    'countries': partial(_addable_string_table, 'country', 'countries'),
+    'datums': partial(_addable_string_table, 'datum', 'datum_types'),
+    'legaleses': partial(_addable_string_table, 'legalese', 'legaleses'),
+    'level_units': partial(_string_table, 'level_units', 'level_unit_types'),
+    'dir_units': partial(_string_table, 'dir_units', 'dir_unit_types'),
+    }
+
+Constituent = namedtuple('Constituent', ['name', 'speed', 'node_factors'])
+
+NodeFactor = namedtuple('NodeFactor', ['equilibrium', 'node_factor'])
+
+class NodeFactors(Mapping):
+    """ Mapping from ``year`` to :cls:`NodeFactor`\s
+    """
+    def __init__(self, start_year, node_factors):
+        self.start_year = start_year
+        self.node_factors = node_factors
+
+    @property
+    def end_year(self):
+        return self.start_year + len(self.node_factors)
+
+    def __len__(self):
+        return len(self.node_factors)
+
+    def __iter__(self):
+        return xrange(self.start_year, self.end_year)
+
+    def values(self):
+        # FIXME: py3k compatibility (need to return a view?)
+        return self.node_factors
+
+    def __getitem__(self, year):
+        return self.node_factors[int(year) - self.start_year]
 
 class Tcd(object):
 
@@ -18,33 +99,11 @@ class Tcd(object):
     _current_database = None
 
     def __init__(self, filename, constituents):
-        start_year = max(map(attrgetter('start_year'), constituents))
-        year_end = min(map(attrgetter('year_end'), constituents))
-        num_years = year_end - start_year
-        if num_years < 1:
-            raise ValueError("num_years is zero")
-        factor_t = c_float32 * num_years
-        factors_t = POINTER(c_float32) * len(constituents)
-        equilibriums = factors_t(*(
-            factor_t(*(c.equilibriums[start_year - c.start_year:][:num_years]))
-            for c in constituents))
-        node_factors = factors_t(*(
-            factor_t(*(c.node_factors[start_year - c.start_year:][:num_years]))
-            for c in constituents))
-
+        packed_constituents = self._pack_constituents(constituents)
         self.filename = filename
-
         with self.lock:
             type(self)._current_database = None
-            rv = _libtcd.create_tide_db(
-                bytes_(filename),
-                len(constituents),
-                (c_char_p * len(constituents))(
-                    *map(attrgetter('name'), constituents)),
-                (c_float64 * len(constituents))(
-                    *map(attrgetter('speed'), constituents)),
-                start_year, num_years,
-                equilibriums, node_factors)
+            rv = _libtcd.create_tide_db(bytes_(filename), *packed_constituents)
             assert rv               # FIXME: raise real exception
             type(self)._current_database = self
             self._init()
@@ -56,11 +115,6 @@ class Tcd(object):
         with self:
             self._init()
         return self
-
-    def _init(self):
-        self._header = _libtcd.get_tide_db_header()
-        self.constituents = map(self._read_constituent,
-                                range(self._header.constituents))
 
     @property
     def current_database(self):
@@ -93,7 +147,6 @@ class Tcd(object):
     def __getitem__(self, i):
         with self:
             rec = _libtcd.read_tide_record(i)
-            _libtcd.dump_tide_record(rec)
             return self._station(rec)
 
     def __setitem__(self, i, station):
@@ -118,15 +171,57 @@ class Tcd(object):
         for i in xrange(len(self)):
             yield self[i]
 
-    def _read_constituent(self, num):
-        header = self._header
-        number_of_years = header.number_of_years
-        return Constituent(
-            header.start_year,
-            name=_libtcd.get_constituent(num),
-            speed=_libtcd.get_speed(num),
-            equilibriums=_libtcd.get_equilibriums(num)[:number_of_years],
-            node_factors=_libtcd.get_node_factors(num)[:number_of_years])
+    def _init(self):
+        self._header = _libtcd.get_tide_db_header()
+        for name, type_ in _STRING_TABLES.items():
+            setattr(self, name, type_(self._header))
+        self.constituents = self._read_constituents()
+
+    def _pack_constituents(self, constituents):
+        start_year = max(map(attrgetter('node_factors.start_year'),
+                             constituents.values()))
+        end_year = min(map(attrgetter('node_factors.end_year'),
+                           constituents.values()))
+        num_years = end_year - start_year
+        if num_years < 1:
+            raise ValueError("num_years is zero")
+
+        n = len(constituents)
+        names = (c_char_p * n)()
+        speeds = (_libtcd.c_float64 * n)()
+        equilibriums = (POINTER(_libtcd.c_float32) * n)()
+        node_factors = (POINTER(_libtcd.c_float32) * n)()
+
+        for i, c in enumerate(constituents.values()):
+            names[i] = c.name
+            speeds[i] = c.speed
+            equilibriums[i] = eqs = (_libtcd.c_float32 * num_years)()
+            node_factors[i] = nfs = (_libtcd.c_float32 * num_years)()
+            for j in range(num_years):
+                eqs[j], nfs[j] = c.node_factors[start_year + j]
+
+        return (n, names, speeds,
+                start_year, num_years, equilibriums, node_factors)
+
+    def _read_constituents(self):
+        start_year = self._header.start_year
+        number_of_years = self._header.number_of_years
+        constituents = OrderedDict()
+        for i in range(self._header.constituents):
+            name = text_type(_libtcd.get_constituent(i), _libtcd.ENCODING)
+            if name in constituents:
+                raise InvalidTcdFile("duplicate constituent name (%r)" % name)
+            speed = _libtcd.get_speed(i)
+            factors = islice(
+                izip(_libtcd.get_equilibriums(i), _libtcd.get_node_factors(i)),
+                number_of_years)
+            factors = (NodeFactor(eq, nf)
+                       for eq, nf in izip(_libtcd.get_equilibriums(i),
+                                           _libtcd.get_node_factors(i)))
+            factors = list(islice(factors, number_of_years))
+            node_factors = NodeFactors(start_year, factors)
+            constituents[name] = Constituent(name, speed, node_factors)
+        return constituents
 
     def _station(self, rec):
         if rec.header.record_type == _libtcd.REFERENCE_STATION:
@@ -136,49 +231,50 @@ class Tcd(object):
 
     def _common_attrs(self, rec):
         header = rec.header
+        latitude = header.latitude
+        longitude = header.longitude
+        if latitude == 0.0 and longitude == 0.0:
+            latitude = longitude = None
         return dict(
             record_number=header.record_number,
-            latitude=header.latitude,
-            longitude=header.longitude,
-            tzfile=_libtcd.get_tzfile(header.tzfile),
+            latitude=latitude,
+            longitude=longitude,
+            tzfile=self.tzfiles[header.tzfile],
             name=header.name,
-            country=_libtcd.get_country(rec.country),
+            country=self.countries[rec.country],
             source=rec.source or None,
-            restriction=_libtcd.get_restriction(rec.restriction),
+            restriction=self.restrictions[rec.restriction],
             comments=rec.comments or None,
             notes=rec.notes,
-            legalese=(_libtcd.get_legalese(rec.legalese)
+            legalese=(self.legaleses[rec.legalese]
                       if rec.legalese != 0 else None),
             station_id_context=rec.station_id_context or None,
             station_id=rec.station_id or None,
             date_imported=unpack_date(rec.date_imported),
             xfields=rec.xfields,
-            direction_units=_libtcd.get_dir_units(rec.direction_units),
+            direction_units=self.dir_units[rec.direction_units],
             min_direction=unpack_dir(rec.min_direction),
             max_direction=unpack_dir(rec.max_direction),
-            level_units=_libtcd.get_level_units(rec.level_units),
+            level_units=self.level_units[rec.level_units],
             )
 
     def _reference_station(self, rec):
         assert rec.header.record_type == _libtcd.REFERENCE_STATION
         assert rec.header.reference_station == -1
 
-        coefficients = []
-        for n, constituent in enumerate(self.constituents):
-            amplitude = rec.amplitude[n]
-            if amplitude != 0.0:
-                epoch = rec.epoch[n]
-                coefficients.append(Coefficient(amplitude, epoch, constituent))
-
         return ReferenceStation(
             datum_offset=rec.datum_offset,
-            datum=_libtcd.get_datum(rec.datum),
+            datum=self.datums[rec.datum],
             zone_offset=unpack_offset(rec.zone_offset),
             expiration_date=unpack_date(rec.expiration_date),
             months_on_station=rec.months_on_station or None,
             last_date_on_station=unpack_date(rec.last_date_on_station),
             confidence=rec.confidence,
-            coefficients=coefficients,
+            coefficients=[
+                Coefficient(amplitude, epoch, constituent)
+                for constituent, amplitude, epoch in zip(
+                    self.constituents.values(), rec.amplitude, rec.epoch)
+                if amplitude != 0.0],
             **self._common_attrs(rec))
 
     def _subordinate_station(self, rec):
@@ -192,54 +288,48 @@ class Tcd(object):
             reference_station=self._reference_station(refstation),
             min_time_add=unpack_offset(rec.min_time_add),
             min_level_add=rec.min_level_add,
-            min_level_multiply=level_multiply_(rec.min_level_multiply),
+            min_level_multiply=unpack_level_multiply(rec.min_level_multiply),
             max_time_add=unpack_offset(rec.max_time_add),
             max_level_add=rec.max_level_add,
-            max_level_multiply=level_multiply_(rec.max_level_multiply),
+            max_level_multiply=unpack_level_multiply(rec.max_level_multiply),
             flood_begins=unpack_offset(rec.flood_begins,
                                        _libtcd.NULLSLACKOFFSET),
             ebb_begins=unpack_offset(rec.ebb_begins, _libtcd.NULLSLACKOFFSET),
             **self._common_attrs(rec))
 
     def _record(self, station):
-        header = _libtcd.TIDE_STATION_HEADER(
-            latitude=station.latitude,
-            longitude=station.longitude,
-            tzfile=_libtcd.find_or_add_tzfile(station.tzfile, self._header),
-            name=station.name,
-            reference_station=-1)
-
-        dir_units = _libtcd.find_dir_units(station.direction_units)
-        assert dir_units != -1          # FIXME: real exception
-        level_units = _libtcd.find_level_units(station.level_units)
-        assert level_units != -1        # FIXME: real exception
-
+        latitude = station.latitude
+        longitude = station.longitude
+        if latitude is None or longitude is None:
+            latitude = longitude = 0.0
         rec = _libtcd.TIDE_RECORD(
-            header=header,
-            country=_libtcd.find_or_add_country(station.country or "Unknown",
-                                                self._header),
+            header=_libtcd.TIDE_STATION_HEADER(
+                latitude=latitude,
+                longitude=longitude,
+                tzfile=self.tzfiles.find_or_add(station.tzfile),
+                name=station.name),
+            country=self.countries.find_or_add(station.country or "Unknown"),
             source=station.source or "",
-            restriction=_libtcd.find_or_add_restriction(station.restriction,
-                                                        self._header),
+            restriction=self.restrictions.find_or_add(
+                station.restriction or ""),
             comments=station.comments or "",
             notes=station.notes or "",
-            legalese=_libtcd.find_or_add_legalese(station.legalese or "NULL",
-                                                  self._header),
+            legalese=self.legaleses.find_or_add(station.legalese or "NULL"),
             station_id_context=station.station_id_context or "",
             station_id=station.station_id or "",
             date_imported=pack_date(station.date_imported),
             xfields=station.xfields or "",
-            direction_units=dir_units,
+            direction_units=self.dir_units.index(station.direction_units),
             min_direction=pack_dir(station.min_direction),
             max_direction=pack_dir(station.max_direction),
-            level_units=level_units,
+            level_units=self.level_units.index(station.level_units),
             )
 
         if isinstance(station, ReferenceStation):
             rec.header.record_type = _libtcd.REFERENCE_STATION
             rec.header.reference_station = -1
             rec.datum_offset = station.datum_offset
-            rec.datum = (_libtcd.find_or_add_datum(station.datum, self._header)
+            rec.datum = (self.datums.find_or_add(station.datum)
                          if station.datum else 0)
             rec.zone_offset = pack_offset(station.zone_offset)
             rec.expiration_date = pack_date(station.expiration_date)
@@ -247,19 +337,19 @@ class Tcd(object):
             rec.last_date_on_station = pack_date(station.last_date_on_station)
             rec.confidence = station.confidence or 0
 
-            coeffs = dict(((c.constituent.name, c.constituent.speed), c)
-                          for c in station.coefficients)
-            coeff_t = c_float32 * 255
-            amplitude = coeff_t()
-            epoch = coeff_t()
+            coeffs = dict((coeff.constituent.name, coeff)
+                          for coeff in station.coefficients)
+            coeff_t = _libtcd.c_float32 * 255
+            amplitudes = coeff_t()
+            epochs = coeff_t()
             for n, constituent in enumerate(self.constituents):
-                coeff = coeffs.pop((constituent.name, constituent.speed), None)
+                coeff = coeffs.pop(constituent, None)
                 if coeff is not None:
-                    amplitude[n] = coeff.amplitude
-                    epoch[n] = coeff.epoch
+                    amplitudes[n] = coeff.amplitude
+                    epochs[n] = coeff.epoch
             assert len(coeffs) == 0     # FIXME: better diagnostics
-            rec.amplitude = amplitude
-            rec.epoch = epoch
+            rec.amplitude = amplitudes
+            rec.epoch = epochs
 
             flood_begins=_libtcd.NULLSLACKOFFSET,
             ebb_begins=_libtcd.NULLSLACKOFFSET,
@@ -273,10 +363,12 @@ class Tcd(object):
             rec.header.reference_station = FIXME
             rec.min_time_add = pack_offset(station.min_time_add)
             rec.min_level_add = station.min_level_add or 0
-            rec.min_level_multiply = station.min_level_multiply or 0
+            rec.min_level_multiply = pack_level_multiply(
+                station.min_level_multiply)
             rec.max_time_add = pack_offset(station.max_time_add)
             rec.max_level_add = station.max_level_add or 0
-            rec.max_level_multiply = station.max_level_multiply or 0
+            rec.max_level_multiply = pack_level_multiply(
+                station.max_level_multiply)
             rec.flood_begins = pack_offset(station.flood_begins,
                                            _libtcd.NULLSLACKOFFSET)
             rec.ebb_begins = pack_offset(station.ebb_begins,
@@ -285,75 +377,51 @@ class Tcd(object):
 
 def unpack_date(packed):
     if packed != 0:
-        year = packed // 10000
-        month = (packed % 10000) // 100
-        day = packed % 100
-        return datetime.date(year, month, day)
+        yyyy, mmdd = divmod(int(packed), 10000)
+        mm, dd = divmod(mmdd, 100)
+        return datetime.date(yyyy, mm, dd)
 
 def pack_date(date):
     if date is None:
         return 0
     return date.year * 10000 + date.month * 100 + date.day
 
+def unpack_level_multiply(packed):
+    if packed > 0.0:
+        return packed
+
+def pack_level_multiply(level_multiply):
+    if level_multiply is None:
+        return 0.0
+    assert level_multiply > 0.0
+    return level_multiply
+
 def unpack_offset(packed, null_value=None):
     if packed != null_value:
-        sign = 1
-        if packed < 0:
-            sign = -1
-            packed = -packed
-        hours = packed // 100
-        minutes = packed % 100
-        return sign * datetime.timedelta(hours=hours, minutes=minutes)
+        sign = 1 if packed >= 0 else -1
+        hours, minutes = divmod(abs(packed), 100)
+        assert 0 <= minutes < 60
+        return sign * timeoffset(hours=hours, minutes=minutes)
 
 def pack_offset(offset, null_value=0):
     if offset is None:
         return null_value
-    sign = 1
-    if offset < datetime.timedelta(0):
-        sign = -1
+    sign = 1 if offset >= datetime.timedelta(0) else -1
     minutes = int(round(abs(offset.total_seconds()) / 60.0))
-    hours = minutes // 60
-    minutes = minutes % 60
-    return sign * (100 * hours) + minutes
+    hh, mm = divmod(minutes, 60)
+    return sign * (100 * hh + mm)
 
-def pack_dir(packed):
-    if packed != 361:
-        assert 0 <= packed < 360
+def unpack_dir(packed):
+    if 0 <= packed < 360:
         return packed
 
-def unpack_dir(direction):
+def pack_dir(direction):
     if direction is None:
         return 361
     assert 0 <= direction < 360
     return direction
 
-class Constituent(object):
-    def __init__(self, start_year, name, speed, equilibriums, node_factors):
-        assert len(equilibriums) == len(node_factors)
-        self.start_year = start_year
-        self.name = name
-        self.speed = speed
-        self.equilibriums = equilibriums
-        self.node_factors = node_factors
-
-    @property
-    def year_end(self):
-        """ One past the last year in the database.
-        """
-        return self.start_year + len(self.equilibriums)
-
-    def __repr__(self):
-        return "<{0.__class__.__name__}: {0.name} speed={0.speed}>".format(self)
-
-class Coefficient(object):
-    def __init__(self, amplitude, epoch, constituent):
-        self.amplitude = amplitude
-        self.epoch = epoch
-        self.constituent = constituent
-
-    def __repr__(self):
-        return "<{0.__class__.__name__}: "\
-               "{0.contituent.name} amplitude={0.amplitude}>".format(self)
+Coefficient = namedtuple('Coefficient', ['amplitude', 'epoch', 'constituent'])
 
 class TcdRecord(object):
     def __init__(self,
@@ -420,8 +488,24 @@ class SubordinateStation(TcdRecord):
                  flood_begins, ebb_begins,
                  **kw):
         super(SubordinateStation, self).__init__(**kw)
-# FIXME: move
+
 def bytes_(s):
     if isinstance(s, text_type):
-        s = s.encode('iso-8859-1')
+        s = s.encode(_libtcd.ENCODING)
     return s
+
+class timeoffset(datetime.timedelta):
+    def __unicode__(self):
+        minutes, seconds = divmod(int(self.total_seconds()), 60)
+        # FIXME: issue warning instead of AssertionError
+        assert seconds == 0 and self.microseconds == 0
+        sign = '+'
+        if minutes == 0:
+            return '0:00'
+        else:
+            sign = '-' if minutes < 0.0 else '+'
+            hh, mm = divmod(minutes, 60)
+            return "%s%02d:%02d" % (sign, hh, mm)
+
+    def __str__(self):
+        return unicode(self).encode('ascii')
