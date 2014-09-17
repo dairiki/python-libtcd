@@ -6,26 +6,34 @@ from __future__ import absolute_import
 from collections import namedtuple, OrderedDict, Mapping, Sequence
 from ctypes import c_char_p, POINTER
 import datetime
-from functools import partial
-from itertools import islice, izip
+from itertools import count, islice, izip
 from operator import attrgetter
 from threading import Lock
 
-from six import text_type
+from six import binary_type, text_type
 
 from . import _libtcd
 
+_lock = Lock()
+_current_database = None
+
+def get_current_database():
+    return _current_database
+
 class _string_table(Sequence):
-    def __init__(self, name, len_attr, tcd_header):
+    def __init__(self, name, len_attr):
         self._name = name
         self._len_attr = len_attr
-        self._header = tcd_header
 
     def __len__(self):
-        return getattr(self._header, self._len_attr)
+        if _current_database:
+            header = _current_database._header
+        else:
+            header = _libtcd.get_tide_db_header()
+        return getattr(header, self._len_attr)
 
     def __getitem__(self, i):
-        if i < 0 or i >= len(self):
+        if not 0 <= int(i) < len(self):
             raise IndexError(i)
         getter = getattr(_libtcd, 'get_%s' % self._name)
         return text_type(getter(i), _libtcd.ENCODING)
@@ -48,22 +56,21 @@ class _addable_string_table(_string_table):
     # XXX: not needed?
     def add(self, value):
         adder = getattr(_libtcd, 'add_%s' % self._name)
-        return adder(bytes_(value), self._header)
+        header = _current_database._header if _current_database else None
+        return adder(bytes_(value), header)
 
     def find_or_add(self, value):
         find_or_adder = getattr(_libtcd, 'find_or_add_%s' % self._name)
-        return find_or_adder(bytes_(value), self._header)
+        header = _current_database._header if _current_database else None
+        return find_or_adder(bytes_(value), header)
 
-_STRING_TABLES = {
-    'restrictions': partial(_addable_string_table,
-                            'restriction', 'restriction_types'),
-    'tzfiles': partial(_addable_string_table, 'tzfile', 'tzfiles'),
-    'countries': partial(_addable_string_table, 'country', 'countries'),
-    'datums': partial(_addable_string_table, 'datum', 'datum_types'),
-    'legaleses': partial(_addable_string_table, 'legalese', 'legaleses'),
-    'level_units': partial(_string_table, 'level_units', 'level_unit_types'),
-    'dir_units': partial(_string_table, 'dir_units', 'dir_unit_types'),
-    }
+_restrictions = _addable_string_table('restriction', 'restriction_types')
+_tzfiles = _addable_string_table('tzfile', 'tzfiles')
+_countries = _addable_string_table('country', 'countries')
+_datums = _addable_string_table('datum', 'datum_types')
+_legaleses = _addable_string_table('legalese', 'legaleses')
+_level_units = _string_table('level_units', 'level_unit_types')
+_dir_units = _string_table('dir_units', 'dir_unit_types')
 
 Constituent = namedtuple('Constituent', ['name', 'speed', 'node_factors'])
 
@@ -95,17 +102,15 @@ class NodeFactors(Mapping):
 
 class Tcd(object):
 
-    lock = Lock()
-    _current_database = None
-
     def __init__(self, filename, constituents):
+        global _current_database
         packed_constituents = self._pack_constituents(constituents)
         self.filename = filename
-        with self.lock:
-            type(self)._current_database = None
+        with _lock:
+            _current_database = None
             rv = _libtcd.create_tide_db(bytes_(filename), *packed_constituents)
-            assert rv               # FIXME: raise real exception
-            type(self)._current_database = self
+            assert rv                   # FIXME: raise real exception
+            _current_database = self
             self._init()
 
     @classmethod
@@ -116,36 +121,43 @@ class Tcd(object):
             self._init()
         return self
 
-    @property
-    def current_database(self):
-        return type(self)._current_database
-
     def __enter__(self):
-        self.lock.acquire()
+        global _current_database
+        _lock.acquire()
         try:
-            if self.current_database != self:
+            if _current_database != self:
                 rv = _libtcd.open_tide_db(bytes_(self.filename))
                 assert rv               # FIXME: raise real exception
-                type(self)._current_database = self
+                _current_database = self
             return self
         except:
-            self.lock.release()
+            _lock.release()
             raise
 
     def __exit__(self, exc_typ, exc_val, exc_tb):
-        self.lock.release()
+        _lock.release()
 
     def close(self):
-        with self.lock:
-            if self.current_database == self:
+        global _current_database
+        with _lock:
+            if _current_database == self:
                 _libtcd.close_tide_db()
-                type(self)._current_database = None
+                _current_database = None
 
     def __len__(self):
         return self._header.number_of_records
 
+    def __iter__(self):
+        try:
+            for i in count():
+                yield self[i]
+        except IndexError:
+            pass
+
     def __getitem__(self, i):
         with self:
+            if not 0 <= int(i) < len(self):
+                raise IndexError(i)
             rec = _libtcd.read_tide_record(i)
             return self._station(rec)
 
@@ -154,7 +166,6 @@ class Tcd(object):
             rec = self._record(station)
             rv = _libtcd.update_tide_record(i, rec, self._header)
             assert rv                   # FIXME: raise real exception
-
 
     def __delitem__(self, i):
         with self:
@@ -167,14 +178,37 @@ class Tcd(object):
             rv = _libtcd.add_tide_record(rec, self._header)
             assert rv                   # FIXME: raise real exception
 
-    def __iter__(self):
-        for i in xrange(len(self)):
-            yield self[i]
+    def find(self, name):
+        with self:
+            i = _libtcd.find_station(bytes_(name))
+            if i < 0:
+                raise KeyError(name)
+            rec = _libtcd.read_tide_record(i)
+            return self._station(rec)
+
+    def findall(self, name):
+        bname = bytes_(name)
+        stations = []
+        with self:
+            _libtcd.search_station(b"")     # reset search (I hope)
+            while True:
+                i = _libtcd.search_station(bname)
+                if i < 0:
+                    break
+                rec = _libtcd.read_tide_record(i)
+                if rec.name == bname:
+                    stations.append(self._station(rec))
+        return stations
+
+    def dump_tide_record(self, i):
+        """ Dump tide record to stderr (Debugging only.)
+        """
+        with self:
+            rec = _libtcd.read_tide_record(i)
+            _libtcd.dump_tide_record(rec)
 
     def _init(self):
         self._header = _libtcd.get_tide_db_header()
-        for name, type_ in _STRING_TABLES.items():
-            setattr(self, name, type_(self._header))
         self.constituents = self._read_constituents()
 
     def _pack_constituents(self, constituents):
@@ -239,23 +273,23 @@ class Tcd(object):
             record_number=header.record_number,
             latitude=latitude,
             longitude=longitude,
-            tzfile=self.tzfiles[header.tzfile],
-            name=header.name,
-            country=self.countries[rec.country],
-            source=rec.source or None,
-            restriction=self.restrictions[rec.restriction],
-            comments=rec.comments or None,
-            notes=rec.notes,
-            legalese=(self.legaleses[rec.legalese]
+            tzfile=_tzfiles[header.tzfile],
+            name=text_type(header.name, _libtcd.ENCODING),
+            country=_countries[rec.country],
+            source=text_(rec.source or None),
+            restriction=_restrictions[rec.restriction],
+            comments=text_(rec.comments or None),
+            notes=text_type(rec.notes, _libtcd.ENCODING),
+            legalese=(_legaleses[rec.legalese]
                       if rec.legalese != 0 else None),
-            station_id_context=rec.station_id_context or None,
-            station_id=rec.station_id or None,
+            station_id_context=text_(rec.station_id_context or None),
+            station_id=text_(rec.station_id or None),
             date_imported=unpack_date(rec.date_imported),
-            xfields=rec.xfields,
-            direction_units=self.dir_units[rec.direction_units],
+            xfields=text_type(rec.xfields, _libtcd.ENCODING),
+            direction_units=_dir_units[rec.direction_units],
             min_direction=unpack_dir(rec.min_direction),
             max_direction=unpack_dir(rec.max_direction),
-            level_units=self.level_units[rec.level_units],
+            level_units=_level_units[rec.level_units],
             )
 
     def _reference_station(self, rec):
@@ -264,7 +298,7 @@ class Tcd(object):
 
         return ReferenceStation(
             datum_offset=rec.datum_offset,
-            datum=self.datums[rec.datum],
+            datum=_datums[rec.datum],
             zone_offset=unpack_offset(rec.zone_offset),
             expiration_date=unpack_date(rec.expiration_date),
             months_on_station=rec.months_on_station or None,
@@ -306,30 +340,30 @@ class Tcd(object):
             header=_libtcd.TIDE_STATION_HEADER(
                 latitude=latitude,
                 longitude=longitude,
-                tzfile=self.tzfiles.find_or_add(station.tzfile),
-                name=station.name),
-            country=self.countries.find_or_add(station.country or "Unknown"),
-            source=station.source or "",
-            restriction=self.restrictions.find_or_add(
+                tzfile=_tzfiles.find_or_add(station.tzfile),
+                name=bytes_(station.name)),
+            country=_countries.find_or_add(station.country or "Unknown"),
+            source=bytes_(station.source or ""),
+            restriction=_restrictions.find_or_add(
                 station.restriction or ""),
-            comments=station.comments or "",
-            notes=station.notes or "",
-            legalese=self.legaleses.find_or_add(station.legalese or "NULL"),
-            station_id_context=station.station_id_context or "",
-            station_id=station.station_id or "",
+            comments=bytes_(station.comments or ""),
+            notes=bytes_(station.notes or ""),
+            legalese=_legaleses.find_or_add(station.legalese or "NULL"),
+            station_id_context=bytes_(station.station_id_context or ""),
+            station_id=bytes_(station.station_id or ""),
             date_imported=pack_date(station.date_imported),
-            xfields=station.xfields or "",
-            direction_units=self.dir_units.index(station.direction_units),
+            xfields=bytes_(station.xfields or ""),
+            direction_units=_dir_units.index(station.direction_units),
             min_direction=pack_dir(station.min_direction),
             max_direction=pack_dir(station.max_direction),
-            level_units=self.level_units.index(station.level_units),
+            level_units=_level_units.index(station.level_units),
             )
 
         if isinstance(station, ReferenceStation):
             rec.header.record_type = _libtcd.REFERENCE_STATION
             rec.header.reference_station = -1
             rec.datum_offset = station.datum_offset
-            rec.datum = (self.datums.find_or_add(station.datum)
+            rec.datum = (_datums.find_or_add(station.datum)
                          if station.datum else 0)
             rec.zone_offset = pack_offset(station.zone_offset)
             rec.expiration_date = pack_date(station.expiration_date)
@@ -488,10 +522,24 @@ class SubordinateStation(TcdRecord):
                  flood_begins, ebb_begins,
                  **kw):
         super(SubordinateStation, self).__init__(**kw)
+        self.reference_station = reference_station
+        self.min_time_add = min_time_add
+        self.min_level_add = min_level_add
+        self.min_level_multiply = min_level_multiply
+        self.max_time_add = max_time_add
+        self.max_level_add = max_level_add
+        self.max_level_multiply = max_level_multiply
+        self.flood_begins = flood_begins
+        self.ebb_begins = ebb_begins
 
 def bytes_(s):
     if isinstance(s, text_type):
         s = s.encode(_libtcd.ENCODING)
+    return s
+
+def text_(s):
+    if isinstance(s, binary_type):
+        s = text_type(s, _libtcd.ENCODING)
     return s
 
 class timeoffset(datetime.timedelta):

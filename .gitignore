@@ -5,3 +5,5 @@
 /libtcd.egg-info/
 
 /py27/
+/htmlcov/
+/.coverage
