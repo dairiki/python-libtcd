@@ -101,36 +101,48 @@ def test_iter(test_tcd):
            == ["Alameda, San Francisco Bay, California"] * 2
     assert len(stations[0].coefficients) == 32
 
-def test_restrictions(test_tcd):
+def test_restrictions(temp_tcd):
     from libtcd.api import _restrictions
-    with test_tcd:
+    with temp_tcd:
         assert list(_restrictions) == [
             u'Public Domain',
             u'DoD/DoD Contractors Only',
             u'Non-commercial use only']
+        assert _restrictions.find_or_add(u'Fü') == 3
+        assert _restrictions.find_or_add(u'Fü') == 3
 
-def test_tzfiles(test_tcd):
+def test_tzfiles(temp_tcd):
     from libtcd.api import _tzfiles
-    with test_tcd:
+    with temp_tcd:
+        assert len(_tzfiles) == 406
         assert _tzfiles[0] == u'Unknown'
         assert u':America/Los_Angeles' in _tzfiles
+        assert _tzfiles.find_or_add(u'Fü') == 406
+        assert _tzfiles.find_or_add(u'Fü') == 406
 
-def test_countries(test_tcd):
+def test_countries(temp_tcd):
     from libtcd.api import _countries
-    with test_tcd:
+    with temp_tcd:
+        assert len(_countries) == 240
         assert _countries[0] == u'Unknown'
         assert u'United States' in _countries
+        assert _countries.find_or_add(u'Fü') == 240
+        assert _countries.find_or_add(u'Fü') == 240
 
-def test_datums(test_tcd):
+def test_datums(temp_tcd):
     from libtcd.api import _datums
-    with test_tcd:
+    with temp_tcd:
         assert _datums[0] == u'Unknown'
         assert u'Mean Lower Low Water' in _datums
+        assert _datums.find_or_add(u'Fü') == 61
+        assert _datums.find_or_add(u'Fü') == 61
 
-def test_legaleses(test_tcd):
+def test_legaleses(temp_tcd):
     from libtcd.api import _legaleses
-    with test_tcd:
+    with temp_tcd:
         assert list(_legaleses) == [u'NULL']
+        assert _legaleses.find_or_add(u'Fü') == 1
+        assert _legaleses.find_or_add(u'Fü') == 1
 
 def test_level_units(test_tcd):
     from libtcd.api import _level_units
@@ -141,5 +153,44 @@ def test_level_units(test_tcd):
 def test_dir_units(test_tcd):
     from libtcd.api import _dir_units
     with test_tcd:
+        assert list(_dir_units) == [
+            u'Unknown', u'degrees true', u'degrees']
+
+def test_default_restrictions(new_tcd):
+    from libtcd.api import _restrictions
+    with new_tcd:
+        assert list(_restrictions) == [
+            u'Public Domain',
+            u'DoD/DoD Contractors Only']
+
+def test_default_tzfiles(new_tcd):
+    from libtcd.api import _tzfiles
+    with new_tcd:
+        assert _tzfiles[0] == u'Unknown'
+
+def test_default_countries(new_tcd):
+    from libtcd.api import _countries
+    with new_tcd:
+        assert _countries[0] == u'Unknown'
+
+def test_default_datums(new_tcd):
+    from libtcd.api import _datums
+    with new_tcd:
+        assert _datums[0] == u'Unknown'
+
+def test_default_legaleses(new_tcd):
+    from libtcd.api import _legaleses
+    with new_tcd:
+        assert list(_legaleses) == [u'NULL']
+
+def test_default_level_units(new_tcd):
+    from libtcd.api import _level_units
+    with new_tcd:
+        assert list(_level_units) == [
+            u'Unknown', u'feet', u'meters', u'knots', u'knots^2']
+
+def test_default_dir_units(new_tcd):
+    from libtcd.api import _dir_units
+    with new_tcd:
         assert list(_dir_units) == [
             u'Unknown', u'degrees true', u'degrees']
