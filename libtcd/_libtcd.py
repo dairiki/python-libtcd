@@ -56,6 +56,7 @@ class TIDE_STATION_HEADER(Structure):
         ]
 
 class TIDE_RECORD(Structure):
+    _anonymous_ = ['header']
     _fields_ = [
         ('header', TIDE_STATION_HEADER),
         ('country', c_int16),

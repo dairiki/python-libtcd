@@ -260,23 +260,22 @@ class Tcd(object):
         return constituents
 
     def _station(self, rec):
-        if rec.header.record_type == _libtcd.REFERENCE_STATION:
+        if rec.record_type == _libtcd.REFERENCE_STATION:
             return self._reference_station(rec)
         else:
             return self._subordinate_station(rec)
 
     def _common_attrs(self, rec):
-        header = rec.header
-        latitude = header.latitude
-        longitude = header.longitude
+        latitude = rec.latitude
+        longitude = rec.longitude
         if latitude == 0.0 and longitude == 0.0:
             latitude = longitude = None
         return dict(
-            record_number=header.record_number,
+            record_number=rec.record_number,
             latitude=latitude,
             longitude=longitude,
-            tzfile=_tzfiles[header.tzfile],
-            name=text_type(header.name, _libtcd.ENCODING),
+            tzfile=_tzfiles[rec.tzfile],
+            name=text_type(rec.name, _libtcd.ENCODING),
             country=_countries[rec.country],
             source=text_(rec.source or None),
             restriction=_restrictions[rec.restriction],
@@ -295,8 +294,8 @@ class Tcd(object):
             )
 
     def _reference_station(self, rec):
-        assert rec.header.record_type == _libtcd.REFERENCE_STATION
-        assert rec.header.reference_station == -1
+        assert rec.record_type == _libtcd.REFERENCE_STATION
+        assert rec.reference_station == -1
 
         return ReferenceStation(
             datum_offset=rec.datum_offset,
@@ -314,11 +313,10 @@ class Tcd(object):
             **self._common_attrs(rec))
 
     def _subordinate_station(self, rec):
-        header = rec.header
-        assert header.record_type == _libtcd.SUBORDINATE_STATION
+        assert rec.record_type == _libtcd.SUBORDINATE_STATION
 
-        refstation = _libtcd.read_tide_record(header.reference_station)
-        assert refstation.header.record_type == _libtcd.REFERENCE_STATION
+        refstation = _libtcd.read_tide_record(rec.reference_station)
+        assert refstation.rec.record_type == _libtcd.REFERENCE_STATION
 
         return SubordinateStation(
             reference_station=self._reference_station(refstation),
@@ -339,11 +337,11 @@ class Tcd(object):
         if latitude is None or longitude is None:
             latitude = longitude = 0.0
         rec = _libtcd.TIDE_RECORD(
-            header=_libtcd.TIDE_STATION_HEADER(
-                latitude=latitude,
-                longitude=longitude,
-                tzfile=_tzfiles.find_or_add(station.tzfile),
-                name=bytes_(station.name)),
+            latitude=latitude,
+            longitude=longitude,
+            tzfile=_tzfiles.find_or_add(station.tzfile),
+            name=bytes_(station.name),
+
             country=_countries.find_or_add(station.country or "Unknown"),
             source=bytes_(station.source or ""),
             restriction=_restrictions.find_or_add(
@@ -362,8 +360,8 @@ class Tcd(object):
             )
 
         if isinstance(station, ReferenceStation):
-            rec.header.record_type = _libtcd.REFERENCE_STATION
-            rec.header.reference_station = -1
+            rec.record_type = _libtcd.REFERENCE_STATION
+            rec.reference_station = -1
             rec.datum_offset = station.datum_offset
             rec.datum = (_datums.find_or_add(station.datum)
                          if station.datum else 0)
@@ -392,11 +390,11 @@ class Tcd(object):
 
         else:
             assert isinstance(station, SubordinateStation)
-            rec.header.record_type = _libtcd.SUBORDINATE_STATION
+            rec.record_type = _libtcd.SUBORDINATE_STATION
             assert isinstance(station.reference_station, ReferenceStation)
             #FIXME:
             raise NotImplementedError()
-            rec.header.reference_station = FIXME
+            rec.reference_station = FIXME
             rec.min_time_add = pack_offset(station.min_time_add)
             rec.min_level_add = station.min_level_add or 0
             rec.min_level_multiply = pack_level_multiply(
