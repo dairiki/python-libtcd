@@ -156,9 +156,9 @@ class Tcd(object):
 
     def __getitem__(self, i):
         with self:
-            if not 0 <= int(i) < len(self):
-                raise IndexError(i)
             rec = _libtcd.read_tide_record(i)
+            if rec is None:
+                raise IndexError(i)
             return self._station(rec)
 
     def __setitem__(self, i, station):
@@ -205,6 +205,8 @@ class Tcd(object):
         """
         with self:
             rec = _libtcd.read_tide_record(i)
+            if rec is None:
+                raise IndexError(i)
             _libtcd.dump_tide_record(rec)
 
     def _init(self):

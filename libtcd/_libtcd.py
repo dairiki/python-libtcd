@@ -106,11 +106,6 @@ def _check_bool(result, func, args):
         raise Error("%s failed" % func.__name__)
     return args
 
-def _check_index(result, func, args):
-    if result == -1:
-        raise Error("%s failed" % func.__name__)
-    return args
-
 # FIXME: dump_tide_record
 dump_tide_record = _lib.dump_tide_record
 dump_tide_record.restype = None
@@ -196,20 +191,26 @@ get_tide_db_header = _lib.get_tide_db_header
 get_tide_db_header.restype = DB_HEADER_PUBLIC
 get_tide_db_header.argtypes = ()
 
-
+def _check_return_none_on_failure(result, func, args):
+    if isinstance(result, bool):
+        success = result
+    else:
+        success = result >= 0           # result is index or -1
+    rval = args[-1]
+    return rval if success else None
 
 _get_partial_tide_record_t = CFUNCTYPE(c_bool,
                                        c_int32, POINTER(TIDE_STATION_HEADER))
 get_partial_tide_record = _get_partial_tide_record_t(
     ('get_partial_tide_record', _lib), ((1, 'num'), (2, 'rec')))
-get_partial_tide_record.errcheck = _check_bool
+get_partial_tide_record.errcheck = _check_return_none_on_failure
+
 
 _get_next_partial_tide_record_t = CFUNCTYPE(c_int32,
                                             POINTER(TIDE_STATION_HEADER))
 get_next_partial_tide_record = _get_next_partial_tide_record_t(
     ('get_next_partial_tide_record', _lib), ((2, 'rec'),))
-# FIXME: errcheck should raise IndexError, NotFound, or StopIteration?
-get_next_partial_tide_record.errcheck = _check_index
+get_next_partial_tide_record.errcheck = _check_return_none_on_failure
 
 _get_nearest_partial_tide_record_t = CFUNCTYPE(c_int32,
                                                c_float64, c_float64,
@@ -217,17 +218,18 @@ _get_nearest_partial_tide_record_t = CFUNCTYPE(c_int32,
 get_nearest_partial_tide_record = _get_nearest_partial_tide_record_t(
     ('get_nearest_partial_tide_record', _lib),
     ((1, 'lat'), (1, 'lon'), (2, 'rec')))
-# FIXME: errcheck should raise IndexError, NotFound, or StopIteration?
-get_nearest_partial_tide_record.errcheck = _check_index
+get_nearest_partial_tide_record.errcheck = _check_return_none_on_failure
 
-def _check_read_tide_record(result, func, args):
-    if result == -1 or result != args[0]:
-        raise IndexError(args[0])
-    return args
 _read_tide_record_t = CFUNCTYPE(c_int32, c_int32, POINTER(TIDE_RECORD))
 read_tide_record = _read_tide_record_t(('read_tide_record', _lib),
                                        ((1, 'num'), (2, 'rec')))
-read_tide_record.errcheck = _check_read_tide_record
+read_tide_record.errcheck = _check_return_none_on_failure
+
+_read_next_tide_record_t = CFUNCTYPE(c_int32, POINTER(TIDE_RECORD))
+read_next_tide_record = _read_next_tide_record_t(
+    ('read_next_tide_record', _lib),
+    ((2, 'rec'),))
+read_next_tide_record.errcheck = _check_return_none_on_failure
 
 
 _add_tide_record_t = CFUNCTYPE(c_bool,

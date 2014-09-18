@@ -23,6 +23,7 @@ def test_get_tide_db_header(test_tcd):
     assert test_tcd.start_year == 1970
     assert test_tcd.number_of_years == 68
 
+
 def test_get_level_units(test_tcd):
     from libtcd._libtcd import get_level_units
     level_units = map(get_level_units, range(test_tcd.level_unit_types))
@@ -56,3 +57,21 @@ def test_get_datum(test_tcd):
     datums = map(get_datum, range(test_tcd.datum_types))
     assert datums[0] == 'Unknown'
     assert 'Mean Lower Low Water' in datums
+
+def test_get_partial_tide_record(test_tcd):
+    from libtcd._libtcd import get_partial_tide_record
+    header = get_partial_tide_record(0)
+    assert header.name.startswith(u'Alameda,')
+    assert get_partial_tide_record(42) is None
+
+def test_get_next_partial_tide_record(test_tcd):
+    from libtcd._libtcd import (
+        get_partial_tide_record,
+        get_next_partial_tide_record,
+        )
+    headers = [ get_partial_tide_record(0) ]
+    next_header = get_next_partial_tide_record()
+    while next_header is not None:
+        headers.append(next_header)
+        next_header = get_next_partial_tide_record()
+    assert len(headers) == 2
