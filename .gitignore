@@ -7,3 +7,4 @@
 /py27/
 /htmlcov/
 /.coverage
+/.tox/

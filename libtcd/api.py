@@ -6,11 +6,12 @@ from __future__ import absolute_import
 from collections import namedtuple, OrderedDict, Mapping, Sequence
 from ctypes import c_char_p, POINTER
 import datetime
-from itertools import count, islice, izip
+from itertools import count, islice
 from operator import attrgetter
 from threading import Lock
 
 from six import binary_type, text_type
+from six.moves import zip
 
 from . import _libtcd
 
@@ -229,7 +230,7 @@ class Tcd(object):
         node_factors = (POINTER(_libtcd.c_float32) * n)()
 
         for i, c in enumerate(constituents.values()):
-            names[i] = c.name
+            names[i] = bytes_(c.name)
             speeds[i] = c.speed
             equilibriums[i] = eqs = (_libtcd.c_float32 * num_years)()
             node_factors[i] = nfs = (_libtcd.c_float32 * num_years)()
@@ -249,11 +250,11 @@ class Tcd(object):
                 raise InvalidTcdFile("duplicate constituent name (%r)" % name)
             speed = _libtcd.get_speed(i)
             factors = islice(
-                izip(_libtcd.get_equilibriums(i), _libtcd.get_node_factors(i)),
+                zip(_libtcd.get_equilibriums(i), _libtcd.get_node_factors(i)),
                 number_of_years)
             factors = (NodeFactor(eq, nf)
-                       for eq, nf in izip(_libtcd.get_equilibriums(i),
-                                           _libtcd.get_node_factors(i)))
+                       for eq, nf in zip(_libtcd.get_equilibriums(i),
+                                         _libtcd.get_node_factors(i)))
             factors = list(islice(factors, number_of_years))
             node_factors = NodeFactors(start_year, factors)
             constituents[name] = Constituent(name, speed, node_factors)
