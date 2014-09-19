@@ -9,18 +9,15 @@ import datetime
 from itertools import chain, count, islice
 from operator import attrgetter, methodcaller
 from threading import Lock
+import re
 
 from six import text_type
-from six.moves import zip
+from six.moves import range, zip
 
-from .compat import OrderedDict
 from . import _libtcd
+from .compat import OrderedDict
+from .util import timedelta_total_minutes
 
-_lock = Lock()
-_current_database = None
-
-def get_current_database():
-    return _current_database
 
 
 Constituent = namedtuple('Constituent', ['name', 'speed', 'node_factors'])
@@ -42,7 +39,7 @@ class NodeFactors(Mapping):
         return len(self.node_factors)
 
     def __iter__(self):
-        return xrange(self.start_year, self.end_year)
+        return range(self.start_year, self.end_year)
 
     def values(self):
         # FIXME: py3k compatibility (need to return a view?)
@@ -50,6 +47,99 @@ class NodeFactors(Mapping):
 
     def __getitem__(self, year):
         return self.node_factors[int(year) - self.start_year]
+
+Coefficient = namedtuple('Coefficient', ['amplitude', 'epoch', 'constituent'])
+
+class StationHeader(object):
+    _attributes = [
+        ('record_number', None),
+        ('latitude', None),
+        ('longitude', None),
+        ('tzfile', u'Unknown'),
+        ]
+
+    @classmethod
+    def _attrs(cls):
+        return chain.from_iterable(
+            c.__dict__.get('_attributes', ()) for c in cls.__mro__)
+
+    def __init__(self, name, **kwargs):
+        self.name = name
+        for key, dflt in self._attrs():
+            try:
+                value = kwargs.pop(key)
+            except KeyError:
+                value = dflt() if callable(dflt) else dflt
+            setattr(self, key, value)
+        for key in kwargs:
+            raise TypeError(
+                "__init__() got an unexpected keyword argument %r", key)
+
+    def __repr__(self):
+        return "<{0.__class__.__name__}: {0.name}>".format(self)
+
+class ReferenceStationHeader(StationHeader):
+    pass
+
+class SubordinateStationHeader(StationHeader):
+    def __init__(self,
+                 name,
+                 reference_station,
+                 **kwargs):
+        super(SubordinateStationHeader, self).__init__(name, **kwargs)
+        self.reference_station = reference_station
+
+class Station(StationHeader):
+    _attributes = [
+        ('country', u'Unknown'),
+        ('source', None),
+        ('restriction', u'Non-commercial use only'),
+        ('comments', None),
+        ('notes', u''),
+        ('legalese', None),
+        ('station_id_context', None),
+        ('station_id', None),
+        ('date_imported', None),
+        ('xfields', OrderedDict),
+        ('direction_units', None),  # XXX: or should default be u'Unknown'?
+        ('min_direction', None),
+        ('max_direction', None),
+        ('level_units', u'Unknown'),
+        ]
+
+
+class ReferenceStation(ReferenceStationHeader, Station):
+    _attributes = [
+        ('datum_offset', 0.0),
+        ('datum', u'Unknown'),
+        ('zone_offset', datetime.timedelta(0)),
+        ('expiration_date', None),
+        ('months_on_station', 0),
+        ('last_date_on_station', None),
+        ('confidence', 9),
+        ]
+
+    def __init__(self, name, coefficients, **kw):
+        super(ReferenceStation, self).__init__(name, **kw)
+        self.coefficients = coefficients
+
+class SubordinateStation(SubordinateStationHeader, Station):
+    _attributes = [
+        ('min_time_add', None),     # XXX: or timedelta(0)?
+        ('min_level_add', 0.0),
+        ('min_level_multiply', None),
+        ('max_time_add', None),
+        ('max_level_add', 0.0),
+        ('max_level_multiply', None),
+        ('flood_begins', None),
+        ('ebb_begins', None),
+        ]
+
+_lock = Lock()
+_current_database = None
+
+def get_current_database():
+    return _current_database
 
 class Tcd(object):
 
@@ -317,10 +407,7 @@ class _time_offset(_attr_descriptor):
     def pack_value(tcd, offset):
         if offset is None:
             return 0;
-        minutes, seconds = divmod(offset.days * 24 * 3600 + offset.seconds, 60)
-        if seconds > 30 or (seconds == 30 and offset.microseconds > 0):
-            minutes += 1
-        # FIXME: error/warn if seconds != 0?
+        minutes = timedelta_total_minutes(offset)
         sign = 1 if minutes > 0 else -1
         hh, mm = divmod(abs(minutes), 60)
         return sign * (100 * hh + mm)
@@ -330,12 +417,7 @@ class timeoffset(datetime.timedelta):
     ''' A :cls:`datetime.timedelta` which stringifies to "[-+]HH:MM"
     '''
     def __str__(self):
-        minutes, seconds = divmod(self.days * 24 * 3600 + self.seconds, 60)
-        if seconds > 30 or (seconds == 30 and self.microseconds > 0):
-            minutes += 1
-        # FIXME: issue warning instead of AssertionError?
-        #assert seconds == 0 and self.microseconds == 0
-        sign = '+'
+        minutes = timedelta_total_minutes(self)
         if minutes == 0:
             return '0:00'
         else:
@@ -355,6 +437,27 @@ class _direction(_attr_descriptor):
         if not 0 <= direction < 360:
             raise ValueError(direction)
         return int(direction)
+
+class _xfields(_attr_descriptor):
+    @staticmethod
+    def unpack_value(tcd, packed):
+        s = text_type(packed, _libtcd.ENCODING)
+        xfields = OrderedDict()
+        for m in re.finditer(r'([^\n]+):([^\n]*(?:\n [^\n]*)*)', s):
+            k, v = m.groups()
+            xfields[k] = '\n'.join(v.split('\n '))
+        return xfields
+
+    @staticmethod
+    def pack_value(tcd, xfields):
+        pieces = []
+        for k, v in xfields.items():
+            pieces.extend([bytes_(k), b':'])
+            lines = bytes_(v).split(b'\n')
+            for line in lines[:-1]:
+                pieces.extend([line, b'\n '])
+            pieces.extend([lines[-1], b'\n'])
+        return b''.join(pieces)
 
 class _record_number(_attr_descriptor):
     def pack(self, tcd, station):
@@ -444,7 +547,7 @@ _COMMON_ATTRS = [
     _string('notes'),
     _string('station_id_context', null_value=b''),
     _string('station_id', null_value=b''),
-    _string('xfields'),
+    _xfields('xfields'),
 
     _date('date_imported', null_value=0),
 
@@ -516,98 +619,6 @@ def _pack_tide_record(tcd, station):
     pack = methodcaller('pack', tcd, station)
     packed.update(chain.from_iterable(map(pack, attrs)))
     return _libtcd.TIDE_RECORD(**packed)
-
-Coefficient = namedtuple('Coefficient', ['amplitude', 'epoch', 'constituent'])
-
-class TcdRecord(object):
-    def __init__(self,
-                 name,
-                 record_number=None,
-                 latitude=None,
-                 longitude=None,
-                 tzfile=u'Unknown',
-                 country=u'Unknown',
-                 source=None,
-                 restriction=u'Non-commercial use only',
-                 comments=None,
-                 notes=u'',
-                 legalese=None,
-                 station_id_context=None,
-                 station_id=None,
-                 date_imported=None,
-                 xfields=u'',
-                 direction_units=None,  # XXX: or should default be u'Unknown'?
-                 min_direction=None,
-                 max_direction=None,
-                 level_units=u'Unknown'):
-        self.record_number = record_number
-        self.latitude = latitude
-        self.longitude = longitude
-        self.tzfile = tzfile
-        self.name = name
-        self.country = country
-        self.source = source
-        self.restriction = restriction
-        self.comments = comments
-        self.notes = notes
-        self.legalese = legalese
-        self.station_id_context = station_id_context
-        self.station_id = station_id
-        self.date_imported = date_imported
-        self.xfields = xfields
-        self.direction_units = direction_units
-        self.min_direction = min_direction
-        self.max_direction = max_direction
-        self.level_units = level_units
-
-    def __repr__(self):
-        return "<{0.__class__.__name__}: {0.name}>".format(self)
-
-class ReferenceStation(TcdRecord):
-    def __init__(self,
-                 name,
-                 coefficients,
-                 datum_offset=0.0,
-                 datum=u'Unknown',
-                 zone_offset=datetime.timedelta(0),
-                 expiration_date=None,
-                 months_on_station=0,
-                 last_date_on_station=None,
-                 confidence=9,
-                 **kw):
-        super(ReferenceStation, self).__init__(name, **kw)
-        self.datum_offset = datum_offset
-        self.datum = datum
-        self.zone_offset = zone_offset
-        self.expiration_date = expiration_date
-        self.months_on_station = months_on_station
-        self.last_date_on_station = last_date_on_station
-        self.confidence = confidence
-        self.coefficients = coefficients
-
-class SubordinateStation(TcdRecord):
-    def __init__(self,
-                 name,
-                 reference_station,
-                 min_time_add=None,     # XXX: or timedelta(0)?
-                 min_level_add=0.0,
-                 min_level_multiply=None,
-                 max_time_add=None,
-                 max_level_add=0.0,
-                 max_level_multiply=None,
-                 flood_begins=None,
-                 ebb_begins=None,
-                 **kw):
-        super(SubordinateStation, self).__init__(name, **kw)
-        self.reference_station = reference_station
-        self.min_time_add = min_time_add
-        self.min_level_add = min_level_add
-        self.min_level_multiply = min_level_multiply
-        self.max_time_add = max_time_add
-        self.max_level_add = max_level_add
-        self.max_level_multiply = max_level_multiply
-        self.flood_begins = flood_begins
-        self.ebb_begins = ebb_begins
 
 def bytes_(s):
     if isinstance(s, text_type):

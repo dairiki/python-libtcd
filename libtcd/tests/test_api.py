@@ -145,3 +145,22 @@ def test_timeoffset(seconds, expected):
     from libtcd.api import timeoffset
     offset = timeoffset(seconds=seconds)
     assert str(offset) == expected
+
+def test_xfields_unpack_value():
+    from libtcd.api import _xfields
+    from libtcd.compat import OrderedDict
+
+    tcd = 'bogus'
+    dscr = _xfields('xfields')
+    d = dscr.unpack_value(tcd, b'a:b\n b2\nc: d \n\n')
+    assert d == OrderedDict([('a', 'b\nb2'), ('c', ' d ')])
+
+def test_xfields_pack_value():
+    from libtcd.api import _xfields
+    from libtcd.compat import OrderedDict
+
+    tcd = 'bogus'
+    dscr = _xfields('xfields')
+    d = OrderedDict([('a', 'b\nb2'), ('c', ' d ')])
+    packed = dscr.pack_value(tcd, d)
+    assert packed == b'a:b\n b2\nc: d \n'
