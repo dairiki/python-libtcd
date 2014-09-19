@@ -3,13 +3,17 @@
 """
 from __future__ import absolute_import
 
+from ctypes import c_float
+import datetime
 from shutil import copyfileobj
 import tempfile
 from pkg_resources import resource_filename
 import os
 
 import pytest
+from six import binary_type, integer_types
 
+from libtcd.compat import OrderedDict
 from libtcd.util import remove_if_exists
 
 TCD_FILENAME = resource_filename('libtcd.tests', 'harmonics-initial.tcd')
@@ -144,21 +148,334 @@ def test_timeoffset(seconds, expected):
     offset = timeoffset(seconds=seconds)
     assert str(offset) == expected
 
-def test_xfields_unpack_value():
-    from libtcd.api import _xfields
-    from libtcd.compat import OrderedDict
+class attr_descriptor_test_base(object):
 
-    tcd = 'bogus'
-    dscr = _xfields('xfields')
-    d = dscr.unpack_value(tcd, b'a:b\n b2\nc: d \n\n')
-    assert d == OrderedDict([('a', 'b\nb2'), ('c', ' d ')])
+    @pytest.fixture
+    def tcd(self):
+        return 'ignored'
 
-def test_xfields_pack_value():
-    from libtcd.api import _xfields
-    from libtcd.compat import OrderedDict
+    @pytest.fixture
+    def station(self, descriptor, values):
+        name = descriptor.name
+        packed, unpacked = values
+        class MockStation(object):
+            def __init__(self, unpacked=0):
+                setattr(self, name, unpacked)
+        return MockStation(unpacked)
 
-    tcd = 'bogus'
-    dscr = _xfields('xfields')
-    d = OrderedDict([('a', 'b\nb2'), ('c', ' d ')])
-    packed = dscr.pack_value(tcd, d)
-    assert packed == b'a:b\n b2\nc: d \n'
+    @pytest.fixture
+    def rec(self, descriptor, values):
+        from libtcd._libtcd import TIDE_RECORD
+        packed_name = descriptor.packed_name
+        packed, unpacked = values
+        rec = TIDE_RECORD()
+        setattr(rec, packed_name, packed)
+        return rec
+
+    @pytest.fixture
+    def values(self):
+        packed = unpacked = 42
+        return packed, unpacked
+
+    def test_pack(self, descriptor, tcd, station, values):
+        packed_name = descriptor.packed_name
+        packed, unpacked = values
+        assert list(descriptor.pack(tcd, station)) \
+               == [(packed_name, packed)]
+
+    def test_unpack(self, descriptor, tcd, rec, values):
+        name = descriptor.name
+        packed, unpacked = values
+        assert list(descriptor.unpack(tcd, rec)) == [(name, unpacked)]
+
+    def test_unpack_value(self, descriptor, tcd, values):
+        packed, unpacked = values
+        assert descriptor.unpack_value(tcd, packed) == unpacked
+
+    def test_pack_value(self, descriptor, tcd, values):
+        packed, unpacked = values
+        assert descriptor.pack_value(tcd, unpacked) == packed
+
+class Test_string_table(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor_class(self):
+        from libtcd.api import _string_table
+        return _string_table
+
+    @pytest.fixture
+    def descriptor(self, descriptor_class, monkeypatch):
+        from libtcd import _libtcd
+
+        table = [
+            b'Unknown',
+            u'fü'.encode('iso-8859-1'),
+            ]
+
+        def get(i):
+            assert isinstance(i, integer_types)
+            if 0 <= i < len(table):
+                return table[i]
+            else:
+                return b'Unknown'
+
+        def find(s):
+            assert isinstance(s, binary_type)
+            try:
+                return table.index(s)
+            except ValueError:
+                return -1
+
+        def find_or_add(s):
+            assert isinstance(s, binary_type)
+            i = find(s)
+            if i < 0:
+                i = len(table)
+                table.append(s)
+            return i
+
+        monkeypatch.setattr(_libtcd, 'get_tzfile', get, raising=False)
+        monkeypatch.setattr(_libtcd, 'find_tzfile', find, raising=False)
+        monkeypatch.setattr(_libtcd, 'find_or_add_tzfile', find_or_add,
+                            raising=False)
+        return descriptor_class('tzfile')
+
+    @pytest.fixture
+    def values(self):
+        packed = 1
+        unpacked = u'fü'
+        return packed, unpacked
+
+    def test_unpack_value_unknown(self, descriptor, tcd):
+        assert descriptor.unpack_value(tcd, 0) == u'Unknown'
+        assert descriptor.unpack_value(tcd, 2) == u'Unknown'
+        assert descriptor.unpack_value(tcd, -1) == u'Unknown'
+
+    def test_pack_value_none(self, descriptor, tcd):
+        assert descriptor.pack_value(tcd, None) == 0
+
+    def test_pack_value_unknonw(self, descriptor, tcd):
+        assert descriptor.pack_value(tcd, u'Unknown') == 0
+
+    def test_pack_unknown_value(self, descriptor, tcd):
+        assert descriptor.pack_value(tcd, u'missing') == 2
+        assert descriptor.unpack_value(tcd, 2) == u'missing'
+
+class Test_string_enum(Test_string_table):
+    @pytest.fixture
+    def descriptor_class(self):
+        from libtcd.api import _string_enum
+        return _string_enum
+
+    def test_pack_unknown_value(self, descriptor, tcd):
+        with pytest.raises(ValueError):
+            descriptor.pack_value(tcd, u'missing')
+
+class Test_string(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _string
+        return _string('name')
+
+    @pytest.fixture
+    def values(self):
+        unpacked = u'Göober'
+        packed = unpacked.encode('iso-8859-1')
+        return packed, unpacked
+
+    # FIXME: should this pass?
+    #def test_pack_value_none(self, descriptor, tcd):
+    #    assert descriptor.pack_value(tcd, None) == b''
+
+class Test_date(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _date
+        return _date('date_imported')
+
+    @pytest.fixture
+    def values(self):
+        unpacked = datetime.date(2001, 2, 3)
+        packed = 20010203
+        return packed, unpacked
+
+class Test_time_offset(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _time_offset
+        return _time_offset('zone_offset')
+
+    @pytest.fixture
+    def values(self):
+        unpacked = -datetime.timedelta(hours=9, minutes=30)
+        packed = -930
+        return packed, unpacked
+
+    def test_unpack_bad_value(self, descriptor, tcd):
+        with pytest.raises(AssertionError):
+            descriptor.unpack_value(tcd, 60)
+
+    def test_pack_value_none(self, descriptor, tcd):
+        assert descriptor.pack_value(tcd, None) == 0
+
+class Test_direction(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _direction
+        return _direction('min_direction')
+
+    def test_unpack_value_none(self, descriptor, tcd):
+        assert descriptor.unpack_value(tcd, 361) is None
+
+    # FIXME: should this pass?
+    #def test_pack_value_none(self, descriptor, tcd):
+    #    assert descriptor.pack_value(tcd, None) == 361
+
+    def test_pack_value_raises_value_error(self, descriptor, tcd):
+        with pytest.raises(ValueError):
+            descriptor.pack_value(tcd, 361)
+
+class Test_xfields(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _xfields
+        return _xfields('xfields')
+
+    @pytest.fixture
+    def values(self):
+        packed = (b'a:b\n'
+                  b' b2\n'
+                  b'c: d \n')
+        unpacked = OrderedDict([
+            ('a', 'b\nb2'),
+            ('c', ' d '),
+            ])
+        return packed, unpacked
+
+    def test_unpack_value_ignores_cruft(self, descriptor, tcd, values):
+        packed, unpacked = values
+        assert descriptor.unpack_value(tcd, packed + b'\nfoo\n') == unpacked
+
+class Test_record_number(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _record_number
+        return _record_number('record_number')
+
+    def test_pack(self, descriptor, tcd):
+        assert list(descriptor.pack(tcd, 42)) == []
+
+class Test_record_type(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _record_type
+        return _record_type('record_type')
+
+    def test_unpack(self, descriptor, rec, tcd):
+        assert list(descriptor.unpack(tcd, rec)) == []
+
+    def test_pack(self, descriptor, tcd):
+        from libtcd.api import ReferenceStation, SubordinateStation
+        refstation = ReferenceStation('ref', [])
+        substation = SubordinateStation('sub', refstation)
+
+        assert list(descriptor.pack(tcd, refstation)) == [('record_type', 1)]
+        assert list(descriptor.pack(tcd, substation)) == [('record_type', 2)]
+
+class Test_coordinates(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _coordinates
+        return _coordinates('coordinates')
+
+    def test_unpack(self, descriptor, tcd, rec):
+        rec.latitude = 0.0
+        rec.longitude = 1.0
+        assert dict(descriptor.unpack(tcd, rec)) == {
+            'latitude': 0.0,
+            'longitude': 1.0,
+            }
+
+    def test_unpack_none(self, descriptor, tcd, rec):
+        rec.latitude = 0.0
+        rec.longitude = 0.0
+        assert dict(descriptor.unpack(tcd, rec)) == {
+            'latitude': None,
+            'longitude': None,
+            }
+
+    def test_pack(self, descriptor, tcd, station):
+        station.latitude = 0.0
+        station.longitude = 1.0
+        assert dict(descriptor.pack(tcd, station)) == {
+            'latitude': 0.0,
+            'longitude': 1.0,
+            }
+    def test_pack_none(self, descriptor, tcd, station):
+        station.latitude = station.longitude = None
+        assert dict(descriptor.pack(tcd, station)) == {
+            'latitude': 0.0,
+            'longitude': 0.0,
+            }
+
+class Test_coefficients(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _coefficients
+        return _coefficients('coefficients')
+
+    @pytest.fixture
+    def tcd(self, new_tcd):
+        return new_tcd
+
+    def test_unpack(self, descriptor, tcd, rec):
+        from libtcd.api import Coefficient
+
+        rec.amplitude = (c_float * 255)(1.5)
+        rec.epoch = (c_float * 255)(42.0)
+        constituents = list(tcd.constituents.values())
+        assert list(descriptor.unpack(tcd, rec)) == [
+            ('coefficients', [
+                Coefficient(1.5, 42.0, constituents[0]),
+                ]),
+            ]
+
+    def test_pack(self, descriptor, tcd, station):
+        from libtcd.api import Coefficient
+
+        constituents = list(tcd.constituents.values())
+        station.coefficients = [
+            Coefficient(1.5, 42.0, constituents[0]),
+            ]
+        result = dict(descriptor.pack(tcd, station))
+        assert set(result.keys()) == set(['amplitude', 'epoch'])
+        assert list(result['amplitude']) == [1.5] + [0] * 254
+        assert list(result['epoch']) == [42.0] + [0] * 254
+
+class Test_reference_station(attr_descriptor_test_base):
+    @pytest.fixture
+    def descriptor(self):
+        from libtcd.api import _reference_station
+        return _reference_station('reference_station')
+
+    @pytest.fixture
+    def tcd(self, test_tcd):
+        return test_tcd
+
+    @pytest.fixture
+    def values(self, tcd):
+        packed = 0
+        unpacked = tcd[packed]
+        return packed, unpacked
+
+    def test_unpack(self, descriptor, tcd, rec, values):
+        packed, unpacked = values
+        result = dict(descriptor.unpack(tcd, rec))
+        refstation, = result.values()
+        assert refstation.name == unpacked.name
+        assert refstation.record_number == unpacked.record_number
+
+    def test_unpack_value(self, descriptor, tcd, values):
+        packed, unpacked = values
+        result = descriptor.unpack_value(tcd, packed)
+        assert result.name == unpacked.name
+        assert result.record_number == unpacked.record_number

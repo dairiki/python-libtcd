@@ -250,16 +250,16 @@ class Tcd(object):
     def index(self, station):
         target = _pack_tide_record(self, station)
         for rec in self._find_recs(target.name):
-            if self.compare_records(rec, target) == 0:
+            if self.records_match(rec, target):
                 return rec.record_number
         raise ValueError("Station %r not found" % station.name)
 
     @staticmethod
-    def compare_records(s1, s2):
+    def records_match(s1, s2):
         # XXX: should make this more paranoid?
         def key(rec):
             return rec.record_type, rec.name
-        return cmp(key(s1), key(s2))
+        return key(s1) == key(s2)
 
     def dump_tide_record(self, i):
         """ Dump tide record to stderr (Debugging only.)
@@ -476,7 +476,7 @@ class _record_type(_attr_descriptor):
             record_type = _libtcd.SUBORDINATE_STATION
         yield self.name, record_type
 
-class _coordinates(object):
+class _coordinates(_attr_descriptor):
     # latitude/longitude
     def unpack(self, tcd, rec):
         latitude = rec.latitude
@@ -542,7 +542,7 @@ _COMMON_ATTRS = [
     _record_number('record_number'),
     _record_type('record_type'),
     _string('name'),
-    _coordinates(),                     # latitude and longitude
+    _coordinates('latitude/longitude'), # latitude and longitude
     _string('source', null_value=b''),
     _string('comments', null_value=b''),
     _string('notes'),
