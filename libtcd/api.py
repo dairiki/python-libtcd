@@ -434,11 +434,11 @@ _COMMON_ATTRS = [
     _record_type('record_type'),
     _string('name'),
     _coordinates(),                     # latitude and longitude
-    _string('source', null_value=''),
-    _string('comments', null_value=''),
+    _string('source', null_value=b''),
+    _string('comments', null_value=b''),
     _string('notes'),
-    _string('station_id_context', null_value=''),
-    _string('station_id', null_value=''),
+    _string('station_id_context', null_value=b''),
+    _string('station_id', null_value=b''),
     _string('xfields'),
 
     _date('date_imported', null_value=0),
