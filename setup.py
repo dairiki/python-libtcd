@@ -15,6 +15,9 @@ install_requires = ['six']
 
 tests_require = ['pytest']
 
+if sys.version_info < (2, 7):
+    install_requires.append('ordereddict')
+
 class PyTest(TestCommand):
     user_options = [('pytest-args=', 'a', "Arguments to pass to py.test")]
 

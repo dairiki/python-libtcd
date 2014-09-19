@@ -3,7 +3,7 @@
 """
 from __future__ import absolute_import
 
-from collections import namedtuple, OrderedDict, Mapping
+from collections import namedtuple, Mapping
 from ctypes import c_char_p, POINTER
 import datetime
 from itertools import chain, count, islice
@@ -13,6 +13,7 @@ from threading import Lock
 from six import text_type
 from six.moves import zip
 
+from .compat import OrderedDict
 from . import _libtcd
 
 _lock = Lock()
@@ -316,10 +317,12 @@ class _time_offset(_attr_descriptor):
     def pack_value(tcd, offset):
         if offset is None:
             return 0;
-        sign = 1 if offset >= datetime.timedelta(0) else -1
-        minutes = int(round(abs(offset.total_seconds()) / 60.0))
-        hh, mm = divmod(minutes, 60)
+        minutes, seconds = divmod(offset.days * 24 * 3600 + offset.seconds, 60)
+        if seconds > 30 or (seconds == 30 and offset.microseconds > 0):
+            minutes += 1
         # FIXME: error/warn if seconds != 0?
+        sign = 1 if minutes > 0 else -1
+        hh, mm = divmod(abs(minutes), 60)
         return sign * (100 * hh + mm)
 
 # FIXME: move
@@ -327,7 +330,9 @@ class timeoffset(datetime.timedelta):
     ''' A :cls:`datetime.timedelta` which stringifies to "[-+]HH:MM"
     '''
     def __str__(self):
-        minutes = int(round(self.total_seconds() / 60.0))
+        minutes, seconds = divmod(self.days * 24 * 3600 + self.seconds, 60)
+        if seconds > 30 or (seconds == 30 and self.microseconds > 0):
+            minutes += 1
         # FIXME: issue warning instead of AssertionError?
         #assert seconds == 0 and self.microseconds == 0
         sign = '+'
