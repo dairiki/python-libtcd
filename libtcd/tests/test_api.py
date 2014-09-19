@@ -3,13 +3,14 @@
 """
 from __future__ import absolute_import
 
-import errno
 from shutil import copyfileobj
 import tempfile
 from pkg_resources import resource_filename
 import os
 
 import pytest
+
+from libtcd.util import remove_if_exists
 
 TCD_FILENAME = resource_filename('libtcd.tests', 'harmonics-initial.tcd')
 
@@ -51,18 +52,15 @@ def new_tcd(dummy_constituents):
 @pytest.fixture
 def temp_tcd(request):
     from libtcd.api import Tcd
+
     tmpfile = tempfile.NamedTemporaryFile(delete=False)
     with open(TCD_FILENAME, 'rb') as infp:
         copyfileobj(infp, tmpfile)
     tmpfile.flush()
 
-    def finalizer():
-        try:
-            os.unlink(tmpfile.name)
-        except OSError as ex:
-            if ex.errno != errno.ENOENT:
-                raise
-    request.addfinalizer(finalizer)
+    def fin():
+        remove_if_exists(tmpfile.name)
+    request.addfinalizer(fin)
 
     return Tcd.open(tmpfile.name)
 

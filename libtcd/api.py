@@ -15,10 +15,8 @@ from six import text_type
 from six.moves import range, zip
 
 from . import _libtcd
-from .compat import OrderedDict
+from .compat import bytes_, OrderedDict
 from .util import timedelta_total_minutes
-
-
 
 Constituent = namedtuple('Constituent', ['name', 'speed', 'node_factors'])
 
@@ -147,9 +145,10 @@ class Tcd(object):
         global _current_database
         packed_constituents = self._pack_constituents(constituents)
         self.filename = filename
+        bfilename = bytes_(filename, _libtcd.ENCODING)
         with _lock:
             _current_database = None
-            rv = _libtcd.create_tide_db(bytes_(filename), *packed_constituents)
+            rv = _libtcd.create_tide_db(bfilename, *packed_constituents)
             assert rv                   # FIXME: raise real exception
             _current_database = self
             self._init()
@@ -164,10 +163,11 @@ class Tcd(object):
 
     def __enter__(self):
         global _current_database
+        bfilename = bytes_(self.filename, _libtcd.ENCODING)
         _lock.acquire()
         try:
             if _current_database != self:
-                rv = _libtcd.open_tide_db(bytes_(self.filename))
+                rv = _libtcd.open_tide_db(bfilename)
                 assert rv               # FIXME: raise real exception
                 _current_database = self
             return self
@@ -226,15 +226,16 @@ class Tcd(object):
 
     def find(self, name):
         with self:
-            i = _libtcd.find_station(bytes_(name))
+            i = _libtcd.find_station(bytes_(name, _libtcd.ENCODING))
             if i < 0:
                 raise KeyError(name)
             rec = _libtcd.read_tide_record(i)
             return _unpack_tide_record(self, rec)
 
     def findall(self, name):
+        bname = bytes_(name, _libtcd.ENCODING)
         return [ _unpack_tide_record(self, rec)
-                 for rec in self_find_recs(bytes_(name)) ]
+                 for rec in self_find_recs(bname) ]
 
     def _find_recs(self, name):
         _libtcd.search_station(b"")     # reset search (I hope)
@@ -289,7 +290,7 @@ class Tcd(object):
         node_factors = (POINTER(_libtcd.c_float32) * n)()
 
         for i, c in enumerate(constituents.values()):
-            names[i] = bytes_(c.name)
+            names[i] = bytes_(c.name, _libtcd.ENCODING)
             speeds[i] = c.speed
             equilibriums[i] = eqs = (_libtcd.c_float32 * num_years)()
             node_factors[i] = nfs = (_libtcd.c_float32 * num_years)()
@@ -369,7 +370,7 @@ class _string_table(_attr_descriptor):
     def pack_value(self, tcd, s):
         if s is None:
             return 0
-        i = self.finder(bytes_(s))
+        i = self.finder(bytes_(s, _libtcd.ENCODING))
         if i < 0:
             raise ValueError(s)         # FIXME: better message
         return i
@@ -382,7 +383,7 @@ class _string(_attr_descriptor):
         return text_type(b, _libtcd.ENCODING)
 
     def pack_value(self, tcd, s):
-        return bytes_(s)
+        return bytes_(s, _libtcd.ENCODING)
 
 class _date(_attr_descriptor):
     @staticmethod
@@ -452,8 +453,8 @@ class _xfields(_attr_descriptor):
     def pack_value(tcd, xfields):
         pieces = []
         for k, v in xfields.items():
-            pieces.extend([bytes_(k), b':'])
-            lines = bytes_(v).split(b'\n')
+            pieces.extend([bytes_(k, _libtcd.ENCODING), b':'])
+            lines = bytes_(v, _libtcd.ENCODING).split(b'\n')
             for line in lines[:-1]:
                 pieces.extend([line, b'\n '])
             pieces.extend([lines[-1], b'\n'])
@@ -619,8 +620,3 @@ def _pack_tide_record(tcd, station):
     pack = methodcaller('pack', tcd, station)
     packed.update(chain.from_iterable(map(pack, attrs)))
     return _libtcd.TIDE_RECORD(**packed)
-
-def bytes_(s):
-    if isinstance(s, text_type):
-        s = s.encode(_libtcd.ENCODING)
-    return s

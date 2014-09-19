@@ -3,22 +3,22 @@
 """
 from __future__ import absolute_import
 
-import errno
 from itertools import count, takewhile
 from pkg_resources import resource_filename
 from shutil import copyfileobj
 import tempfile
-import os
 
 import pytest
-from six import text_type
 from six.moves import map
+
+from libtcd.util import remove_if_exists
 
 TEST_TCD = resource_filename('libtcd.tests', 'harmonics-initial.tcd')
 
 @pytest.fixture
 def test_tcdfile(request):
-    from libtcd._libtcd import open_tide_db, close_tide_db
+    from libtcd._libtcd import open_tide_db, close_tide_db, ENCODING
+    from libtcd.compat import bytes_
 
     # Copy original so make sure it doesn't get mutated
     tmpfp = tempfile.NamedTemporaryFile()
@@ -31,14 +31,15 @@ def test_tcdfile(request):
         tmpfp.close()
     request.addfinalizer(fin)
 
-    open_tide_db(bytes_(tmpfp.name))
+    open_tide_db(bytes_(tmpfp.name, ENCODING))
     return tmpfp.name
 
 @pytest.fixture
 def empty_tcdfile(request):
     from libtcd._libtcd import (
-        create_tide_db, close_tide_db,
+        create_tide_db, close_tide_db, ENCODING,
         c_char_p, c_float32, c_float64, POINTER)
+    from libtcd.compat import bytes_
 
     filename = tempfile.NamedTemporaryFile(delete=False).name
     def fin():
@@ -49,7 +50,7 @@ def empty_tcdfile(request):
     contituents = (c_char_p * 0)()
     speeds = (c_float64 * 0)()
     equilibriums = epochs = (POINTER(c_float32) * 0)()
-    create_tide_db(bytes_(filename), 0, contituents, speeds,
+    create_tide_db(bytes_(filename, ENCODING), 0, contituents, speeds,
                    1970, 0, equilibriums, epochs)
     return filename
 
@@ -58,18 +59,6 @@ def any_tcdfile(request):
     fixture = request.param
     return request.getfuncargvalue(fixture)
 
-def remove_if_exists(filename):
-    try:
-        os.unlink(filename)
-    except OSError as ex:
-        if ex.errno != errno.ENOENT:
-            raise
-
-def bytes_(s):
-    from libtcd import _libtcd
-    if isinstance(s, text_type):
-        s = s.encode(_libtcd.ENCODING)
-    return s
 
 def test_get_tide_db_header(test_tcdfile):
     from libtcd._libtcd import get_tide_db_header
