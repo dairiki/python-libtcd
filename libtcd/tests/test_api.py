@@ -19,12 +19,34 @@ def test_tcd():
     return Tcd.open(TCD_FILENAME)
 
 @pytest.fixture
-def new_tcd():
+def dummy_constituents():
+    from libtcd.api import Constituent, NodeFactors, NodeFactor
+    c = Constituent('J1', 15.5854433,
+                    NodeFactors(1970, [NodeFactor(1.0, 2.0)]))
+    constituents = {c.name: c}
+    return constituents
+
+@pytest.fixture
+def dummy_refstation(dummy_constituents):
+    from libtcd.api import Coefficient, ReferenceStation
+    return ReferenceStation(
+        name=u'Somewhere',
+        coefficients=[
+            Coefficient(13.0, 42.0, dummy_constituents['J1']),
+            ])
+
+@pytest.fixture
+def dummy_substation(dummy_refstation):
+    from libtcd.api import SubordinateStation
+    return SubordinateStation(
+        name=u'Somewhere Else',
+        reference_station=dummy_refstation)
+
+@pytest.fixture
+def new_tcd(dummy_constituents):
     from libtcd.api import Tcd, Constituent, NodeFactors, NodeFactor
     tmpfile = tempfile.NamedTemporaryFile()
-    c = Constituent('J1', 15.5854433, NodeFactors(1970, [NodeFactor(1.0, 2.0)]))
-    constituents = {c.name: c}
-    return Tcd(tmpfile.name, constituents)
+    return Tcd(tmpfile.name, dummy_constituents)
 
 @pytest.fixture
 def temp_tcd(request):
@@ -74,9 +96,10 @@ def test_len(test_tcd):
 def test_getitem(test_tcd):
     assert test_tcd[0].name == u"Alameda, San Francisco Bay, California"
     with pytest.raises(IndexError):
-        test_tcd[-1]
+        test_tcd[100000]
     with pytest.raises(IndexError):
         test_tcd[len(test_tcd)]
+    assert test_tcd[-1].record_number == len(test_tcd) - 1
 
 def test_setitem(temp_tcd):
     station = temp_tcd[1]
@@ -94,6 +117,16 @@ def test_append(temp_tcd):
     ilen = len(tcd)
     tcd.append(tcd[0])
     assert len(temp_tcd) == ilen + 1
+
+def test_append_refstation(new_tcd, dummy_refstation):
+    tcd = new_tcd
+    tcd.append(dummy_refstation)
+    assert len(tcd) == 1
+
+def test_append_substation(new_tcd, dummy_substation):
+    tcd = new_tcd
+    tcd.append(dummy_substation)
+    assert len(tcd) == 2
 
 def test_iter(test_tcd):
     stations = list(test_tcd)

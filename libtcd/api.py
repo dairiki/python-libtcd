@@ -105,6 +105,8 @@ class Tcd(object):
             pass
 
     def __getitem__(self, i):
+        if i < 0:
+            i += len(self)
         with self:
             rec = _libtcd.read_tide_record(i)
             if rec is None:
@@ -124,9 +126,12 @@ class Tcd(object):
 
     def append(self, station):
         with self:
-            rec = _pack_tide_record(self, station)
-            rv = _libtcd.add_tide_record(rec, self._header)
-            assert rv                   # FIXME: raise real exception
+            self._append(station)
+
+    def _append(self, station):
+        rec = _pack_tide_record(self, station)
+        rv = _libtcd.add_tide_record(rec, self._header)
+        assert rv                   # FIXME: raise real exception
 
     def find(self, name):
         with self:
@@ -137,18 +142,32 @@ class Tcd(object):
             return _unpack_tide_record(self, rec)
 
     def findall(self, name):
-        bname = bytes_(name)
-        stations = []
-        with self:
-            _libtcd.search_station(b"")     # reset search (I hope)
-            while True:
-                i = _libtcd.search_station(bname)
-                if i < 0:
-                    break
-                rec = _libtcd.read_tide_record(i)
-                if rec.name == bname:
-                    stations.append(_unpack_tide_record(self, rec))
-        return stations
+        return [ _unpack_tide_record(self, rec)
+                 for rec in self_find_recs(bytes_(name)) ]
+
+    def _find_recs(self, name):
+        _libtcd.search_station(b"")     # reset search (I hope)
+        while True:
+            i = _libtcd.search_station(name)
+            if i < 0:
+                break
+            rec = _libtcd.read_tide_record(i)
+            if rec.name == name:
+                yield rec
+
+    def index(self, station):
+        target = _pack_tide_record(self, station)
+        for rec in self._find_recs(target.name):
+            if self.compare_records(rec, target) == 0:
+                return rec.record_number
+        raise ValueError("Station %r not found" % station.name)
+
+    @staticmethod
+    def compare_records(s1, s2):
+        # XXX: should make this more paranoid?
+        def key(rec):
+            return rec.record_type, rec.name
+        return cmp(key(s1), key(s2))
 
     def dump_tide_record(self, i):
         """ Dump tide record to stderr (Debugging only.)
@@ -257,6 +276,8 @@ class _string_table(_attr_descriptor):
         return text_type(self.getter(i), _libtcd.ENCODING)
 
     def pack_value(self, tcd, s):
+        if s is None:
+            return 0
         i = self.finder(bytes_(s))
         if i < 0:
             raise ValueError(s)         # FIXME: better message
@@ -293,6 +314,8 @@ class _time_offset(_attr_descriptor):
 
     @staticmethod
     def pack_value(tcd, offset):
+        if offset is None:
+            return 0;
         sign = 1 if offset >= datetime.timedelta(0) else -1
         minutes = int(round(abs(offset.total_seconds()) / 60.0))
         hh, mm = divmod(minutes, 60)
@@ -332,6 +355,18 @@ class _direction(_attr_descriptor):
 class _record_number(_attr_descriptor):
     def pack(self, tcd, station):
         return ()                       # never pack record number
+
+class _record_type(_attr_descriptor):
+    def unpack(self, tcd, rec):
+        return ()
+
+    def pack(self, tcd, station):
+        if isinstance(station, ReferenceStation):
+            record_type = _libtcd.REFERENCE_STATION
+        else:
+            assert isinstance(station, SubordinateStation)
+            record_type = _libtcd.SUBORDINATE_STATION
+        yield self.name, record_type
 
 class _coordinates(object):
     # latitude/longitude
@@ -387,10 +422,17 @@ class _reference_station(_attr_descriptor):
 
     @staticmethod
     def pack_value(tcd, refstation):
-        raise NotImplementedError()
+        assert isinstance(refstation, ReferenceStation)
+        try:
+            i = tcd.index(refstation)
+        except ValueError:
+            tcd._append(refstation)
+            i = len(tcd) - 1
+        return i
 
 _COMMON_ATTRS = [
     _record_number('record_number'),
+    _record_type('record_type'),
     _string('name'),
     _coordinates(),                     # latitude and longitude
     _string('source', null_value=''),
@@ -450,44 +492,50 @@ def _unpack_tide_record(tcd, rec):
     unpack = methodcaller('unpack', tcd, rec)
     return station_class(**dict(chain.from_iterable(map(unpack, attrs))))
 
+# "Null" values for TIDE_RECORD fields in those cases where the "null" value
+# is not zero.
+_TIDE_RECORD_DEFAULTS = {
+    'reference_station': -1,
+    'min_direction': 361,
+    'max_direction': 361,
+    'flood_begins': _libtcd.NULLSLACKOFFSET,
+    'ebb_begins': _libtcd.NULLSLACKOFFSET,
+    }
+
 def _pack_tide_record(tcd, station):
+    packed = _TIDE_RECORD_DEFAULTS.copy()
     if isinstance(station, ReferenceStation):
         attrs = _REFSTATION_ATTRS
-        # FIXME: convert these to attribute descriptors
-        extra_attrs = dict(
-            record_type=_libtcd.REFERENCE_STATION,
-            reference_station=-1,
-            flood_begins=_libtcd.NULLSLACKOFFSET,
-            ebb_begins=_libtcd.NULLSLACKOFFSET,
-            )
     else:
         assert isinstance(station, SubordinateStation)
         attrs = _SUBSTATION_ATTRS
-        # FIXME: convert these to attribute descriptors
-        extra_attrs = dict(
-            record_type=_libtcd.SUBORDINATE_STATION,
-            )
-
     pack = methodcaller('pack', tcd, station)
-    packed = dict(chain.from_iterable(map(pack, attrs)))
-    packed.update(extra_attrs)
+    packed.update(chain.from_iterable(map(pack, attrs)))
     return _libtcd.TIDE_RECORD(**packed)
 
 Coefficient = namedtuple('Coefficient', ['amplitude', 'epoch', 'constituent'])
 
 class TcdRecord(object):
     def __init__(self,
-                 record_number,
-                 latitude, longitude,
-                 tzfile, name,
-                 country, source, restriction, comments, notes, legalese,
-                 station_id_context, station_id,
-                 date_imported,
-                 xfields,
-                 direction_units,
-                 min_direction,
-                 max_direction,
-                 level_units):
+                 name,
+                 record_number=None,
+                 latitude=None,
+                 longitude=None,
+                 tzfile=u'Unknown',
+                 country=u'Unknown',
+                 source=None,
+                 restriction=u'Non-commercial use only',
+                 comments=None,
+                 notes=u'',
+                 legalese=None,
+                 station_id_context=None,
+                 station_id=None,
+                 date_imported=None,
+                 xfields=u'',
+                 direction_units=None,  # XXX: or should default be u'Unknown'?
+                 min_direction=None,
+                 max_direction=None,
+                 level_units=u'Unknown'):
         self.record_number = record_number
         self.latitude = latitude
         self.longitude = longitude
@@ -513,16 +561,17 @@ class TcdRecord(object):
 
 class ReferenceStation(TcdRecord):
     def __init__(self,
-                 datum_offset,
-                 datum,
-                 zone_offset,
-                 expiration_date,
-                 months_on_station,
-                 last_date_on_station,
-                 confidence,
+                 name,
                  coefficients,
+                 datum_offset=0.0,
+                 datum=u'Unknown',
+                 zone_offset=datetime.timedelta(0),
+                 expiration_date=None,
+                 months_on_station=0,
+                 last_date_on_station=None,
+                 confidence=9,
                  **kw):
-        super(ReferenceStation, self).__init__(**kw)
+        super(ReferenceStation, self).__init__(name, **kw)
         self.datum_offset = datum_offset
         self.datum = datum
         self.zone_offset = zone_offset
@@ -534,12 +583,18 @@ class ReferenceStation(TcdRecord):
 
 class SubordinateStation(TcdRecord):
     def __init__(self,
+                 name,
                  reference_station,
-                 min_time_add, min_level_add, min_level_multiply,
-                 max_time_add, max_level_add, max_level_multiply,
-                 flood_begins, ebb_begins,
+                 min_time_add=None,     # XXX: or timedelta(0)?
+                 min_level_add=0.0,
+                 min_level_multiply=None,
+                 max_time_add=None,
+                 max_level_add=0.0,
+                 max_level_multiply=None,
+                 flood_begins=None,
+                 ebb_begins=None,
                  **kw):
-        super(SubordinateStation, self).__init__(**kw)
+        super(SubordinateStation, self).__init__(name, **kw)
         self.reference_station = reference_station
         self.min_time_add = min_time_add
         self.min_level_add = min_level_add
