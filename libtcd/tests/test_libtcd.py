@@ -88,6 +88,7 @@ def test_get_tide_db_header(test_tcdfile):
     ('get_country', b'Unknown', b'United States'),
     ('get_legalese', b'NULL', None),
     ('get_datum', b'Unknown', b'Mean Lower Low Water'),
+    ('get_tzfile', b'Unknown', b':America/Los_Angeles'),
     ])
 def test_get_string(any_tcdfile, method, string0, contains):
     from libtcd import _libtcd
@@ -107,6 +108,7 @@ def test_get_string(any_tcdfile, method, string0, contains):
     ('find_country', b'United States', 224),
     ('find_legalese', b'NULL', 0),
     ('find_datum', b'Mean Lower Low Water', 3),
+    ('find_tzfile', b':America/Los_Angeles', 115),
     ])
 def test_find_string(test_tcdfile, method, str, expected):
     from libtcd import _libtcd
@@ -114,8 +116,8 @@ def test_find_string(test_tcdfile, method, str, expected):
     assert finder(str) == expected
     assert finder(b'does not exist') == -1
 
-@pytest.mark.parametrize("table",
-                         ['restriction', 'country', 'legalese', 'datum'])
+@pytest.mark.parametrize(
+    "table", ['restriction', 'country', 'legalese', 'datum', 'tzfile'])
 def test_add_string(any_tcdfile, table):
     from libtcd import _libtcd
     get = getattr(_libtcd, 'get_%s' % table)
@@ -129,8 +131,8 @@ def test_add_string(any_tcdfile, table):
     assert j != i
     assert get(j) == s
 
-@pytest.mark.parametrize("table",
-                         ['restriction', 'country', 'legalese', 'datum'])
+@pytest.mark.parametrize(
+    "table", ['restriction', 'country', 'legalese', 'datum', 'tzfile'])
 def test_find_or_add_string(any_tcdfile, table):
     from libtcd import _libtcd
     get = getattr(_libtcd, 'get_%s' % table)
