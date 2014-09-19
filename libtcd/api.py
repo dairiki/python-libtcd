@@ -324,20 +324,19 @@ class _time_offset(_attr_descriptor):
 
 # FIXME: move
 class timeoffset(datetime.timedelta):
-    def __unicode__(self):
-        minutes, seconds = divmod(int(self.total_seconds()), 60)
-        # FIXME: issue warning instead of AssertionError
-        assert seconds == 0 and self.microseconds == 0
+    ''' A :cls:`datetime.timedelta` which stringifies to "[-+]HH:MM"
+    '''
+    def __str__(self):
+        minutes = int(round(self.total_seconds() / 60.0))
+        # FIXME: issue warning instead of AssertionError?
+        #assert seconds == 0 and self.microseconds == 0
         sign = '+'
         if minutes == 0:
             return '0:00'
         else:
             sign = '-' if minutes < 0.0 else '+'
-            hh, mm = divmod(minutes, 60)
+            hh, mm = divmod(abs(minutes), 60)
             return "%s%02d:%02d" % (sign, hh, mm)
-
-    def __str__(self):
-        return unicode(self).encode('ascii')
 
 class _direction(_attr_descriptor):
     @staticmethod

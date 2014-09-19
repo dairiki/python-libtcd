@@ -133,3 +133,15 @@ def test_iter(test_tcd):
     assert [s.name for s in stations] \
            == ["Alameda, San Francisco Bay, California"] * 2
     assert len(stations[0].coefficients) == 32
+
+@pytest.mark.parametrize("seconds,expected", [
+    (0, '0:00'),
+    (3600, '+01:00'),
+    (7229.9, '+02:00'),
+    (7230.1, '+02:01'),
+    (-3629, '-01:00'),
+    ])
+def test_timeoffset(seconds, expected):
+    from libtcd.api import timeoffset
+    offset = timeoffset(seconds=seconds)
+    assert str(offset) == expected
