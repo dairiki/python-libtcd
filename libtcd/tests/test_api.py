@@ -81,7 +81,7 @@ class TestStationHeader(object):
         assert repr(header) == "<StationHeader: Testing>"
 
 ################################################################
-TCD_FILENAME = resource_filename('libtcd.tests', 'harmonics-initial.tcd')
+TCD_FILENAME = resource_filename('libtcd.tests', 'test.tcd')
 
 
 @pytest.fixture
@@ -180,23 +180,25 @@ class TestApi(object):
         assert len(test_tcd) == 2
 
     def test_getitem(selef, test_tcd):
-        assert test_tcd[0].name == u"Alameda, San Francisco Bay, California"
+        assert test_tcd[0].name == u"Seattle, Puget Sound, Washington"
         with pytest.raises(IndexError):
             test_tcd[100000]
         with pytest.raises(IndexError):
             test_tcd[len(test_tcd)]
         assert test_tcd[-1].record_number == len(test_tcd) - 1
 
-    def test_setitem(self, temp_tcd):
-        station = temp_tcd[1]
-        station.name = u"Göober"
-        temp_tcd[0] = station
-        assert temp_tcd[0].name == u"Göober"
+    def test_setitem(self, temp_tcd, dummy_refstation):
+        temp_tcd[1] = dummy_refstation
+        assert temp_tcd[1].name == dummy_refstation.name
 
     def test_delitem(self, temp_tcd):
         ilen = len(temp_tcd)
-        del temp_tcd[0]
+        del temp_tcd[1]
         assert len(temp_tcd) == ilen - 1
+
+    def test_delitem_deleting_refstation_deletes_subordinates(self, temp_tcd):
+        del temp_tcd[0]
+        assert len(temp_tcd) == 0
 
     def test_append_refstation(self, new_tcd, dummy_refstation):
         tcd = new_tcd
@@ -210,28 +212,31 @@ class TestApi(object):
 
     def test_iter(self, test_tcd):
         stations = list(test_tcd)
-        assert [s.name for s in stations] \
-            == ["Alameda, San Francisco Bay, California"] * 2
+        assert [s.name for s in stations] == [
+            "Seattle, Puget Sound, Washington",
+            "Tacoma Narrows Bridge, Puget Sound, Washington",
+            ]
         assert len(stations[0].coefficients) == 32
 
     def test_find(self, test_tcd):
-        s = test_tcd.find("Alameda, San Francisco Bay, California")
+        s = test_tcd.find("Seattle, Puget Sound, Washington")
         assert s.record_number == 0
 
     def test_find_raises_key_error(self, test_tcd):
         with pytest.raises(KeyError):
-            test_tcd.find("WHere in the World, San Francisco Bay, California")
+            test_tcd.find("Snaploops, Puget Sound, Washington")
 
-    def test_findall(self, temp_tcd, dummy_refstation):
-        temp_tcd.append(dummy_refstation)
-        stations = temp_tcd.findall("Alameda, San Francisco Bay, California")
+    def test_findall(self, new_tcd, dummy_refstation):
+        new_tcd.append(dummy_refstation)
+        new_tcd.append(dummy_refstation)
+        stations = new_tcd.findall(dummy_refstation.name)
         assert [s.record_number for s in stations] == [0, 1]
 
     def test_dump_tide_record(self, test_tcd, capfd):
         test_tcd.dump_tide_record(0)
         out, err = capfd.readouterr()
         assert out == ''
-        assert "Alameda, San Francisco Bay, California" in err
+        assert "Seattle, Puget Sound, Washington" in err
 
     @pytest.mark.parametrize('i', [2, -1])
     def test_dump_tide_record_raises_index_error(self, test_tcd, i):

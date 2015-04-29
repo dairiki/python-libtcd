@@ -13,7 +13,7 @@ from six.moves import map
 
 from libtcd.util import remove_if_exists
 
-TEST_TCD = resource_filename('libtcd.tests', 'harmonics-initial.tcd')
+TEST_TCD = resource_filename('libtcd.tests', 'test.tcd')
 
 
 @pytest.fixture
@@ -161,7 +161,7 @@ def test_dir_units(any_tcdfile):
 def test_get_partial_tide_record(test_tcdfile):
     from libtcd._libtcd import get_partial_tide_record
     header = get_partial_tide_record(0)
-    assert header.name.startswith(b'Alameda,')
+    assert header.name.startswith(b'Seattle,')
     assert get_partial_tide_record(42) is None
 
 
