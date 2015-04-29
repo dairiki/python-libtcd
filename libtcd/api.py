@@ -22,6 +22,7 @@ Constituent = namedtuple('Constituent', ['name', 'speed', 'node_factors'])
 
 NodeFactor = namedtuple('NodeFactor', ['equilibrium', 'node_factor'])
 
+
 class NodeFactors(Mapping):
     """ Mapping from ``year`` to :cls:`NodeFactor`\s
     """
@@ -51,6 +52,7 @@ class NodeFactors(Mapping):
 
 Coefficient = namedtuple('Coefficient', ['amplitude', 'epoch', 'constituent'])
 
+
 class StationHeader(object):
     _attributes = [
         ('record_number', None),
@@ -79,8 +81,10 @@ class StationHeader(object):
     def __repr__(self):
         return "<{0.__class__.__name__}: {0.name}>".format(self)
 
+
 class ReferenceStationHeader(StationHeader):
     pass
+
 
 class SubordinateStationHeader(StationHeader):
     def __init__(self,
@@ -89,6 +93,7 @@ class SubordinateStationHeader(StationHeader):
                  **kwargs):
         super(SubordinateStationHeader, self).__init__(name, **kwargs)
         self.reference_station = reference_station
+
 
 class Station(StationHeader):
     _attributes = [
@@ -124,6 +129,7 @@ class ReferenceStation(ReferenceStationHeader, Station):
         super(ReferenceStation, self).__init__(name, **kw)
         self.coefficients = coefficients
 
+
 class SubordinateStation(SubordinateStationHeader, Station):
     _attributes = [
         ('min_time_add', None),     # XXX: or timedelta(0)?
@@ -136,6 +142,7 @@ class SubordinateStation(SubordinateStationHeader, Station):
         ('ebb_begins', None),
         ]
 
+
 class InvalidTcdFile(Exception):
     """ Exception raised when a corrupt TCD file is encountered.
     """
@@ -143,8 +150,10 @@ class InvalidTcdFile(Exception):
 _lock = Lock()
 _current_database = None
 
+
 def get_current_database():
     return _current_database
+
 
 class Tcd(object):
 
@@ -241,8 +250,8 @@ class Tcd(object):
 
     def findall(self, name):
         bname = bytes_(name, _libtcd.ENCODING)
-        return [ _unpack_tide_record(self, rec)
-                 for rec in self._find_recs(bname) ]
+        return [_unpack_tide_record(self, rec)
+                for rec in self._find_recs(bname)]
 
     def _find_recs(self, name):
         _libtcd.search_station(b"")     # reset search (I hope)
@@ -325,7 +334,9 @@ class Tcd(object):
             constituents[name] = Constituent(name, speed, node_factors)
         return constituents
 
+
 _marker = object()
+
 
 class _attr_descriptor(object):
     def __init__(self, name, packed_name=None, null_value=_marker, **kwargs):
@@ -358,6 +369,7 @@ class _attr_descriptor(object):
     def pack_value(self, tcd, value):
         return value
 
+
 class _string_table(_attr_descriptor):
     getter_tmpl = 'get_{table_name}'
     finder_tmpl = 'find_or_add_{table_name}'
@@ -380,8 +392,10 @@ class _string_table(_attr_descriptor):
             raise ValueError(s)         # FIXME: better message
         return i
 
+
 class _string_enum(_string_table):
     finder_tmpl = 'find_{table_name}'
+
 
 class _string(_attr_descriptor):
     def unpack_value(self, tcd, b):
@@ -389,6 +403,7 @@ class _string(_attr_descriptor):
 
     def pack_value(self, tcd, s):
         return bytes_(s, _libtcd.ENCODING)
+
 
 class _date(_attr_descriptor):
     @staticmethod
@@ -401,6 +416,7 @@ class _date(_attr_descriptor):
     def pack_value(tcd, date):
         return date.year * 10000 + date.month * 100 + date.day
 
+
 class _time_offset(_attr_descriptor):
     @staticmethod
     def unpack_value(tcd, packed):
@@ -412,11 +428,12 @@ class _time_offset(_attr_descriptor):
     @staticmethod
     def pack_value(tcd, offset):
         if offset is None:
-            return 0;
+            return 0
         minutes = timedelta_total_minutes(offset)
         sign = 1 if minutes > 0 else -1
         hh, mm = divmod(abs(minutes), 60)
         return sign * (100 * hh + mm)
+
 
 # FIXME: move
 class timeoffset(datetime.timedelta):
@@ -431,11 +448,12 @@ class timeoffset(datetime.timedelta):
             hh, mm = divmod(abs(minutes), 60)
             return "%s%02d:%02d" % (sign, hh, mm)
 
+
 class _direction(_attr_descriptor):
     @staticmethod
     def unpack_value(tcd, packed):
         if not 0 <= packed < 360:
-            return None                 # be lenient about ignore bad directions
+            return None       # be lenient: ignore bad directions
         return packed
 
     @staticmethod
@@ -443,6 +461,7 @@ class _direction(_attr_descriptor):
         if not 0 <= direction < 360:
             raise ValueError(direction)
         return int(direction)
+
 
 class _xfields(_attr_descriptor):
     @staticmethod
@@ -465,9 +484,11 @@ class _xfields(_attr_descriptor):
             pieces.extend([lines[-1], b'\n'])
         return b''.join(pieces)
 
+
 class _record_number(_attr_descriptor):
     def pack(self, tcd, station):
         return ()                       # never pack record number
+
 
 class _record_type(_attr_descriptor):
     def unpack(self, tcd, rec):
@@ -480,6 +501,7 @@ class _record_type(_attr_descriptor):
             assert isinstance(station, SubordinateStation)
             record_type = _libtcd.SUBORDINATE_STATION
         yield self.name, record_type
+
 
 class _coordinates(_attr_descriptor):
     # latitude/longitude
@@ -500,6 +522,7 @@ class _coordinates(_attr_descriptor):
             # XXX: Warning if latitude is not None or longitude is not None?
         yield 'latitude', latitude
         yield 'longitude', longitude
+
 
 class _coefficients(_attr_descriptor):
     # latitude/longitude
@@ -526,6 +549,7 @@ class _coefficients(_attr_descriptor):
         yield 'amplitude', amplitudes
         yield 'epoch', epochs
 
+
 class _reference_station(_attr_descriptor):
     @staticmethod
     def unpack_value(tcd, i):
@@ -547,7 +571,7 @@ _COMMON_ATTRS = [
     _record_number('record_number'),
     _record_type('record_type'),
     _string('name'),
-    _coordinates('latitude/longitude'), # latitude and longitude
+    _coordinates('latitude/longitude'),
     _string('source', null_value=b''),
     _string('comments', null_value=b''),
     _string('notes'),
@@ -593,6 +617,7 @@ _SUBSTATION_ATTRS = _COMMON_ATTRS + [
     _time_offset('ebb_begins', null_value=_libtcd.NULLSLACKOFFSET),
     ]
 
+
 def _unpack_tide_record(tcd, rec):
     if rec.record_type == _libtcd.REFERENCE_STATION:
         attrs = _REFSTATION_ATTRS
@@ -614,6 +639,7 @@ _TIDE_RECORD_DEFAULTS = {
     'flood_begins': _libtcd.NULLSLACKOFFSET,
     'ebb_begins': _libtcd.NULLSLACKOFFSET,
     }
+
 
 def _pack_tide_record(tcd, station):
     packed = _TIDE_RECORD_DEFAULTS.copy()

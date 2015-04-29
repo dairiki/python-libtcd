@@ -15,6 +15,7 @@ from libtcd.util import remove_if_exists
 
 TEST_TCD = resource_filename('libtcd.tests', 'harmonics-initial.tcd')
 
+
 @pytest.fixture
 def test_tcdfile(request):
     from libtcd._libtcd import open_tide_db, close_tide_db, ENCODING
@@ -34,6 +35,7 @@ def test_tcdfile(request):
     open_tide_db(bytes_(tmpfp.name, ENCODING))
     return tmpfp.name
 
+
 @pytest.fixture
 def empty_tcdfile(request):
     from libtcd._libtcd import (
@@ -42,6 +44,7 @@ def empty_tcdfile(request):
     from libtcd.compat import bytes_
 
     filename = tempfile.NamedTemporaryFile(delete=False).name
+
     def fin():
         close_tide_db()
         remove_if_exists(filename)
@@ -53,6 +56,7 @@ def empty_tcdfile(request):
     create_tide_db(bytes_(filename, ENCODING), 0, contituents, speeds,
                    1970, 0, equilibriums, epochs)
     return filename
+
 
 @pytest.fixture(params=['test_tcdfile', 'empty_tcdfile'])
 def any_tcdfile(request):
@@ -69,6 +73,7 @@ def test_get_tide_db_header(test_tcdfile):
     assert header.number_of_records == 2
     assert header.start_year == 1970
     assert header.number_of_years == 68
+
 
 @pytest.mark.parametrize("method,string0,contains", [
     ('get_level_units', b'Unknown', b'knots^2'),
@@ -90,6 +95,7 @@ def test_get_string(any_tcdfile, method, string0, contains):
     else:
         assert getter(1) == b'Unknown'
 
+
 @pytest.mark.parametrize("method,str,expected", [
     ('find_level_units', b'knots^2', 4),
     ('find_dir_units', b'degrees', 2),
@@ -105,12 +111,12 @@ def test_find_string(test_tcdfile, method, str, expected):
     assert finder(str) == expected
     assert finder(b'does not exist') == -1
 
+
 @pytest.mark.parametrize(
     "table", ['restriction', 'country', 'legalese', 'datum', 'tzfile'])
 def test_add_string(any_tcdfile, table):
     from libtcd import _libtcd
     get = getattr(_libtcd, 'get_%s' % table)
-    find = getattr(_libtcd, 'find_%s' % table)
     add = getattr(_libtcd, 'add_%s' % table)
     s = b'some string'
     i = add(s)
@@ -119,6 +125,7 @@ def test_add_string(any_tcdfile, table):
     j = add(s)
     assert j != i
     assert get(j) == s
+
 
 @pytest.mark.parametrize(
     "table", ['restriction', 'country', 'legalese', 'datum', 'tzfile'])
@@ -135,6 +142,7 @@ def test_find_or_add_string(any_tcdfile, table):
     assert find(s) == i
     assert find_or_add(s) == i
 
+
 def test_level_units(any_tcdfile):
     from libtcd._libtcd import get_level_units, get_tide_db_header
     header = get_tide_db_header()
@@ -142,11 +150,13 @@ def test_level_units(any_tcdfile):
     assert list(level_units) == [
         b'Unknown', b'feet', b'meters', b'knots', b'knots^2']
 
+
 def test_dir_units(any_tcdfile):
     from libtcd._libtcd import get_dir_units, get_tide_db_header
     header = get_tide_db_header()
     dir_units = map(get_dir_units, range(header.dir_unit_types))
     assert list(dir_units) == [b'Unknown', b'degrees true', b'degrees']
+
 
 def test_get_partial_tide_record(test_tcdfile):
     from libtcd._libtcd import get_partial_tide_record
@@ -154,12 +164,13 @@ def test_get_partial_tide_record(test_tcdfile):
     assert header.name.startswith(b'Alameda,')
     assert get_partial_tide_record(42) is None
 
+
 def test_get_next_partial_tide_record(test_tcdfile):
     from libtcd._libtcd import (
         get_partial_tide_record,
         get_next_partial_tide_record,
         )
-    headers = [ get_partial_tide_record(0) ]
+    headers = [get_partial_tide_record(0)]
     next_header = get_next_partial_tide_record()
     while next_header is not None:
         headers.append(next_header)

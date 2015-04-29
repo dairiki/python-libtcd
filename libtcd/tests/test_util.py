@@ -6,6 +6,7 @@ from __future__ import absolute_import
 from datetime import timedelta
 import pytest
 
+
 class Test_timedelta_total_minutes(object):
     def call_it(self, td, *args, **kwargs):
         from libtcd.util import timedelta_total_minutes

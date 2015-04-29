@@ -83,10 +83,12 @@ class TestStationHeader(object):
 ################################################################
 TCD_FILENAME = resource_filename('libtcd.tests', 'harmonics-initial.tcd')
 
+
 @pytest.fixture
 def test_tcd():
     from libtcd.api import Tcd
     return Tcd.open(TCD_FILENAME)
+
 
 @pytest.fixture
 def dummy_constituents():
@@ -95,6 +97,7 @@ def dummy_constituents():
                     NodeFactors(1970, [NodeFactor(1.0, 2.0)]))
     constituents = {c.name: c}
     return constituents
+
 
 @pytest.fixture
 def dummy_refstation(dummy_constituents):
@@ -105,6 +108,7 @@ def dummy_refstation(dummy_constituents):
             Coefficient(13.0, 42.0, dummy_constituents['J1']),
             ])
 
+
 @pytest.fixture
 def dummy_substation(dummy_refstation):
     from libtcd.api import SubordinateStation
@@ -112,11 +116,13 @@ def dummy_substation(dummy_refstation):
         name=u'Somewhere Else',
         reference_station=dummy_refstation)
 
+
 @pytest.fixture
 def new_tcd(dummy_constituents):
-    from libtcd.api import Tcd, Constituent, NodeFactors, NodeFactor
+    from libtcd.api import Tcd
     tmpfile = tempfile.NamedTemporaryFile()
     return Tcd(tmpfile.name, dummy_constituents)
+
 
 @pytest.fixture
 def temp_tcd(request):
@@ -133,6 +139,7 @@ def temp_tcd(request):
 
     return Tcd.open(tmpfile.name)
 
+
 @pytest.fixture
 def uninitialized_tcd():
     from libtcd.api import Tcd
@@ -141,15 +148,18 @@ def uninitialized_tcd():
     tcd._header = DB_HEADER_PUBLIC()
     return tcd
 
+
 def check_not_locked():
     from libtcd.api import _lock
     assert _lock.acquire(False)
     _lock.release()
 
+
 def test_get_current_database(test_tcd):
     from libtcd.api import get_current_database
     with test_tcd:
         assert get_current_database() == test_tcd
+
 
 class TestApi(object):
     def test_enter_failure(self, temp_tcd):
@@ -277,6 +287,7 @@ class TestApi(object):
         with pytest.raises(InvalidTcdFile):
             tcd._read_constituents()
 
+
 @pytest.mark.parametrize("seconds,expected", [
     (0, '0:00'),
     (3600, '+01:00'),
@@ -289,6 +300,7 @@ def test_timeoffset(seconds, expected):
     offset = timeoffset(seconds=seconds)
     assert str(offset) == expected
 
+
 class attr_descriptor_test_base(object):
 
     @pytest.fixture
@@ -299,6 +311,7 @@ class attr_descriptor_test_base(object):
     def station(self, descriptor, values):
         name = descriptor.name
         packed, unpacked = values
+
         class MockStation(object):
             def __init__(self, unpacked=0):
                 setattr(self, name, unpacked)
@@ -322,7 +335,7 @@ class attr_descriptor_test_base(object):
         packed_name = descriptor.packed_name
         packed, unpacked = values
         assert list(descriptor.pack(tcd, station)) \
-               == [(packed_name, packed)]
+            == [(packed_name, packed)]
 
     def test_unpack(self, descriptor, tcd, rec, values):
         name = descriptor.name
@@ -336,6 +349,7 @@ class attr_descriptor_test_base(object):
     def test_pack_value(self, descriptor, tcd, values):
         packed, unpacked = values
         assert descriptor.pack_value(tcd, unpacked) == packed
+
 
 class Test_string_table(attr_descriptor_test_base):
     @pytest.fixture
@@ -400,6 +414,7 @@ class Test_string_table(attr_descriptor_test_base):
         assert descriptor.pack_value(tcd, u'missing') == 2
         assert descriptor.unpack_value(tcd, 2) == u'missing'
 
+
 class Test_string_enum(Test_string_table):
     @pytest.fixture
     def descriptor_class(self):
@@ -409,6 +424,7 @@ class Test_string_enum(Test_string_table):
     def test_pack_unknown_value(self, descriptor, tcd):
         with pytest.raises(ValueError):
             descriptor.pack_value(tcd, u'missing')
+
 
 class Test_string(attr_descriptor_test_base):
     @pytest.fixture
@@ -423,8 +439,9 @@ class Test_string(attr_descriptor_test_base):
         return packed, unpacked
 
     # FIXME: should this pass?
-    #def test_pack_value_none(self, descriptor, tcd):
+    # def test_pack_value_none(self, descriptor, tcd):
     #    assert descriptor.pack_value(tcd, None) == b''
+
 
 class Test_date(attr_descriptor_test_base):
     @pytest.fixture
@@ -437,6 +454,7 @@ class Test_date(attr_descriptor_test_base):
         unpacked = datetime.date(2001, 2, 3)
         packed = 20010203
         return packed, unpacked
+
 
 class Test_time_offset(attr_descriptor_test_base):
     @pytest.fixture
@@ -457,6 +475,7 @@ class Test_time_offset(attr_descriptor_test_base):
     def test_pack_value_none(self, descriptor, tcd):
         assert descriptor.pack_value(tcd, None) == 0
 
+
 class Test_direction(attr_descriptor_test_base):
     @pytest.fixture
     def descriptor(self):
@@ -467,12 +486,13 @@ class Test_direction(attr_descriptor_test_base):
         assert descriptor.unpack_value(tcd, 361) is None
 
     # FIXME: should this pass?
-    #def test_pack_value_none(self, descriptor, tcd):
+    # def test_pack_value_none(self, descriptor, tcd):
     #    assert descriptor.pack_value(tcd, None) == 361
 
     def test_pack_value_raises_value_error(self, descriptor, tcd):
         with pytest.raises(ValueError):
             descriptor.pack_value(tcd, 361)
+
 
 class Test_xfields(attr_descriptor_test_base):
     @pytest.fixture
@@ -495,6 +515,7 @@ class Test_xfields(attr_descriptor_test_base):
         packed, unpacked = values
         assert descriptor.unpack_value(tcd, packed + b'\nfoo\n') == unpacked
 
+
 class Test_record_number(attr_descriptor_test_base):
     @pytest.fixture
     def descriptor(self):
@@ -503,6 +524,7 @@ class Test_record_number(attr_descriptor_test_base):
 
     def test_pack(self, descriptor, tcd):
         assert list(descriptor.pack(tcd, 42)) == []
+
 
 class Test_record_type(attr_descriptor_test_base):
     @pytest.fixture
@@ -520,6 +542,7 @@ class Test_record_type(attr_descriptor_test_base):
 
         assert list(descriptor.pack(tcd, refstation)) == [('record_type', 1)]
         assert list(descriptor.pack(tcd, substation)) == [('record_type', 2)]
+
 
 class Test_coordinates(attr_descriptor_test_base):
     @pytest.fixture
@@ -550,12 +573,14 @@ class Test_coordinates(attr_descriptor_test_base):
             'latitude': 0.0,
             'longitude': 1.0,
             }
+
     def test_pack_none(self, descriptor, tcd, station):
         station.latitude = station.longitude = None
         assert dict(descriptor.pack(tcd, station)) == {
             'latitude': 0.0,
             'longitude': 0.0,
             }
+
 
 class Test_coefficients(attr_descriptor_test_base):
     @pytest.fixture
@@ -590,6 +615,7 @@ class Test_coefficients(attr_descriptor_test_base):
         assert set(result.keys()) == set(['amplitude', 'epoch'])
         assert list(result['amplitude']) == [1.5] + [0] * 254
         assert list(result['epoch']) == [42.0] + [0] * 254
+
 
 class Test_reference_station(attr_descriptor_test_base):
     @pytest.fixture

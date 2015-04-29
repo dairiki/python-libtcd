@@ -23,6 +23,7 @@ SUBORDINATE_STATION = 2
 NULLSLACKOFFSET = 0xA00
 AMPLITUDE_EPSILON = 0.00005
 
+
 class DB_HEADER_PUBLIC(Structure):
     _fields_ = [
         ('version', c_char * ONELINER_LENGTH),
@@ -43,6 +44,7 @@ class DB_HEADER_PUBLIC(Structure):
         ('pedigree_types', c_uint32),
         ]
 
+
 class TIDE_STATION_HEADER(Structure):
     _fields_ = [
         ('record_number', c_int32),
@@ -54,6 +56,7 @@ class TIDE_STATION_HEADER(Structure):
         ('tzfile', c_int16),
         ('name', c_char * ONELINER_LENGTH),
         ]
+
 
 class TIDE_RECORD(Structure):
     _anonymous_ = ['header']
@@ -101,6 +104,7 @@ class Error(Exception):
     pass
 
 _lib = cdll.LoadLibrary("libtcd.so.0")
+
 
 def _check_bool(result, func, args):
     if not result:
@@ -191,6 +195,7 @@ create_tide_db.errcheck = _check_bool
 get_tide_db_header = _lib.get_tide_db_header
 get_tide_db_header.restype = DB_HEADER_PUBLIC
 get_tide_db_header.argtypes = ()
+
 
 def _check_return_none_on_failure(result, func, args):
     if isinstance(result, bool):
