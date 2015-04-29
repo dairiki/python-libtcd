@@ -111,7 +111,6 @@ def _check_bool(result, func, args):
         raise Error("%s failed" % func.__name__)
     return args
 
-# FIXME: dump_tide_record
 dump_tide_record = _lib.dump_tide_record
 dump_tide_record.restype = None
 dump_tide_record.argtypes = (POINTER(TIDE_RECORD),)
