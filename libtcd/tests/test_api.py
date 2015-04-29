@@ -16,6 +16,70 @@ from six import binary_type, integer_types
 from libtcd.compat import OrderedDict
 from libtcd.util import remove_if_exists
 
+# FIXME: to move
+
+class TestNodeFactors(object):
+    def make_one(self, start_year, node_factors):
+        from libtcd.api import NodeFactors
+        return NodeFactors(start_year, node_factors)
+
+    def make_node_factor(self, equilibrium, node_factor):
+        from libtcd.api import NodeFactor
+        return NodeFactor(equilibrium, node_factor)
+
+    @pytest.fixture
+    def node_factors(self):
+        return [self.make_node_factor(1.0, 1.5)]
+
+    @pytest.fixture
+    def test_factors(self, node_factors):
+        return self.make_one(1972, node_factors)
+
+    def test_end_year(self, test_factors):
+        assert test_factors.end_year == 1973
+
+    def test_len(self, test_factors):
+        assert len(test_factors) == 1
+
+    def test_iter(self, test_factors):
+        assert list(test_factors) == [1972]
+
+    def test_values(self, test_factors, node_factors):
+        assert list(test_factors.values()) == node_factors
+
+    def test_getitem(self, test_factors, node_factors):
+        assert test_factors[1972] == node_factors[0]
+        with pytest.raises(KeyError):
+            test_factors[1973]
+        with pytest.raises(KeyError):
+            test_factors[1971]
+
+class TestStationHeader(object):
+    def make_one(self, *args, **kwargs):
+        from libtcd.api import StationHeader
+        return StationHeader(*args, **kwargs)
+
+    def test_defaults(self):
+        header = self.make_one('Testing')
+        assert header.tzfile == u'Unknown'
+
+    def test_callable_default(self, monkeypatch):
+        from libtcd.api import StationHeader
+        monkeypatch.setattr(StationHeader, '_attributes', [
+            ('test_attr', lambda: 'test value'),
+            ])
+        header = self.make_one('Testing')
+        assert header.test_attr == 'test value'
+
+    def test_bad_kw(self):
+        with pytest.raises(TypeError):
+            self.make_one('Testing', badkw=u'foo')
+
+    def test_repr(self):
+        header = self.make_one('Testing')
+        assert repr(header) == "<StationHeader: Testing>"
+
+################################################################
 TCD_FILENAME = resource_filename('libtcd.tests', 'harmonics-initial.tcd')
 
 @pytest.fixture
@@ -78,63 +142,73 @@ def test_get_current_database(test_tcd):
     with test_tcd:
         assert get_current_database() == test_tcd
 
-def test_enter_failure(temp_tcd):
-    from libtcd import _libtcd
-    os.unlink(temp_tcd.filename)
-    temp_tcd.close()
-    with pytest.raises(_libtcd.Error):
-        temp_tcd.__enter__()
-    check_not_locked()
+class TestApi(object):
+    def test_enter_failure(self, temp_tcd):
+        from libtcd import _libtcd
+        os.unlink(temp_tcd.filename)
+        temp_tcd.close()
+        with pytest.raises(_libtcd.Error):
+            temp_tcd.__enter__()
+        check_not_locked()
 
-def test_constituents(new_tcd):
-    constituents = new_tcd.constituents
-    assert len(constituents) == 1
-    assert list(constituents)[0] == 'J1'
-    assert constituents['J1'].speed == 15.5854433
+    def test_constituents(self, new_tcd, dummy_constituents):
+        constituents = new_tcd.constituents
+        assert len(constituents) == 1
+        assert list(constituents)[0] == 'J1'
+        assert constituents['J1'].speed == dummy_constituents['J1'].speed
 
-def test_len(test_tcd):
-    assert len(test_tcd) == 2
+    def test_len(self, test_tcd):
+        assert len(test_tcd) == 2
 
-def test_getitem(test_tcd):
-    assert test_tcd[0].name == u"Alameda, San Francisco Bay, California"
-    with pytest.raises(IndexError):
-        test_tcd[100000]
-    with pytest.raises(IndexError):
-        test_tcd[len(test_tcd)]
-    assert test_tcd[-1].record_number == len(test_tcd) - 1
+    def test_getitem(selef, test_tcd):
+        assert test_tcd[0].name == u"Alameda, San Francisco Bay, California"
+        with pytest.raises(IndexError):
+            test_tcd[100000]
+        with pytest.raises(IndexError):
+            test_tcd[len(test_tcd)]
+        assert test_tcd[-1].record_number == len(test_tcd) - 1
 
-def test_setitem(temp_tcd):
-    station = temp_tcd[1]
-    station.name = u"Göober"
-    temp_tcd[0] = station
-    assert temp_tcd[0].name == u"Göober"
+    def test_setitem(self, temp_tcd):
+        station = temp_tcd[1]
+        station.name = u"Göober"
+        temp_tcd[0] = station
+        assert temp_tcd[0].name == u"Göober"
 
-def test_delitem(temp_tcd):
-    ilen = len(temp_tcd)
-    del temp_tcd[0]
-    assert len(temp_tcd) == ilen - 1
+    def test_delitem(self, temp_tcd):
+        ilen = len(temp_tcd)
+        del temp_tcd[0]
+        assert len(temp_tcd) == ilen - 1
 
-def test_append(temp_tcd):
-    tcd = temp_tcd
-    ilen = len(tcd)
-    tcd.append(tcd[0])
-    assert len(temp_tcd) == ilen + 1
+    def test_append_refstation(self, new_tcd, dummy_refstation):
+        tcd = new_tcd
+        tcd.append(dummy_refstation)
+        assert len(tcd) == 1
 
-def test_append_refstation(new_tcd, dummy_refstation):
-    tcd = new_tcd
-    tcd.append(dummy_refstation)
-    assert len(tcd) == 1
+    def test_append_substation(self, new_tcd, dummy_substation):
+        tcd = new_tcd
+        tcd.append(dummy_substation)
+        assert len(tcd) == 2
 
-def test_append_substation(new_tcd, dummy_substation):
-    tcd = new_tcd
-    tcd.append(dummy_substation)
-    assert len(tcd) == 2
+    def test_iter(self, test_tcd):
+        stations = list(test_tcd)
+        assert [s.name for s in stations] \
+               == ["Alameda, San Francisco Bay, California"] * 2
+        assert len(stations[0].coefficients) == 32
 
-def test_iter(test_tcd):
-    stations = list(test_tcd)
-    assert [s.name for s in stations] \
-           == ["Alameda, San Francisco Bay, California"] * 2
-    assert len(stations[0].coefficients) == 32
+    def test_find(self, test_tcd):
+        s = test_tcd.find("Alameda, San Francisco Bay, California")
+        assert s.record_number == 0
+
+    def test_findall(self, temp_tcd, dummy_refstation):
+        temp_tcd.append(dummy_refstation)
+        stations = temp_tcd.findall("Alameda, San Francisco Bay, California")
+        assert [s.record_number for s in stations] == [0, 1]
+
+    def test_dump_tide_record(self, test_tcd, capfd):
+        test_tcd.dump_tide_record(0)
+        out, err = capfd.readouterr()
+        assert out == ''
+        assert "Alameda, San Francisco Bay, California" in err
 
 @pytest.mark.parametrize("seconds,expected", [
     (0, '0:00'),
@@ -233,10 +307,9 @@ class Test_string_table(attr_descriptor_test_base):
                 table.append(s)
             return i
 
-        monkeypatch.setattr(_libtcd, 'get_tzfile', get, raising=False)
-        monkeypatch.setattr(_libtcd, 'find_tzfile', find, raising=False)
-        monkeypatch.setattr(_libtcd, 'find_or_add_tzfile', find_or_add,
-                            raising=False)
+        monkeypatch.setattr(_libtcd, 'get_tzfile', get)
+        monkeypatch.setattr(_libtcd, 'find_tzfile', find)
+        monkeypatch.setattr(_libtcd, 'find_or_add_tzfile', find_or_add)
         return descriptor_class('tzfile')
 
     @pytest.fixture

@@ -37,14 +37,17 @@ class NodeFactors(Mapping):
         return len(self.node_factors)
 
     def __iter__(self):
-        return range(self.start_year, self.end_year)
+        return iter(range(self.start_year, self.end_year))
 
     def values(self):
         # FIXME: py3k compatibility (need to return a view?)
         return self.node_factors
 
     def __getitem__(self, year):
-        return self.node_factors[int(year) - self.start_year]
+        i = int(year) - self.start_year
+        if 0 <= i < len(self.node_factors):
+            return self.node_factors[i]
+        raise KeyError(year)
 
 Coefficient = namedtuple('Coefficient', ['amplitude', 'epoch', 'constituent'])
 
@@ -235,7 +238,7 @@ class Tcd(object):
     def findall(self, name):
         bname = bytes_(name, _libtcd.ENCODING)
         return [ _unpack_tide_record(self, rec)
-                 for rec in self_find_recs(bname) ]
+                 for rec in self._find_recs(bname) ]
 
     def _find_recs(self, name):
         _libtcd.search_station(b"")     # reset search (I hope)
