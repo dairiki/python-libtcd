@@ -164,8 +164,7 @@ class Tcd(object):
         bfilename = bytes_(filename, _libtcd.ENCODING)
         with _lock:
             _current_database = None
-            rv = _libtcd.create_tide_db(bfilename, *packed_constituents)
-            assert rv                   # FIXME: raise real exception
+            _libtcd.create_tide_db(bfilename, *packed_constituents)
             _current_database = self
             self._init()
 
@@ -183,8 +182,7 @@ class Tcd(object):
         _lock.acquire()
         try:
             if _current_database != self:
-                rv = _libtcd.open_tide_db(bfilename)
-                assert rv               # FIXME: raise real exception
+                _libtcd.open_tide_db(bfilename)
                 _current_database = self
             return self
         except:
@@ -223,13 +221,11 @@ class Tcd(object):
     def __setitem__(self, i, station):
         with self:
             rec = _pack_tide_record(self, station)
-            rv = _libtcd.update_tide_record(i, rec, self._header)
-            assert rv                   # FIXME: raise real exception
+            _libtcd.update_tide_record(i, rec, self._header)
 
     def __delitem__(self, i):
         with self:
-            rv = _libtcd.delete_tide_record(i, self._header)
-            assert rv                   # FIXME: raise real exception
+            _libtcd.delete_tide_record(i, self._header)
 
     def append(self, station):
         with self:
@@ -237,8 +233,7 @@ class Tcd(object):
 
     def _append(self, station):
         rec = _pack_tide_record(self, station)
-        rv = _libtcd.add_tide_record(rec, self._header)
-        assert rv                   # FIXME: raise real exception
+        _libtcd.add_tide_record(rec, self._header)
 
     def find(self, name):
         with self:
