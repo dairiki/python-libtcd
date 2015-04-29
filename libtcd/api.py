@@ -136,6 +136,10 @@ class SubordinateStation(SubordinateStationHeader, Station):
         ('ebb_begins', None),
         ]
 
+class InvalidTcdFile(Exception):
+    """ Exception raised when a corrupt TCD file is encountered.
+    """
+
 _lock = Lock()
 _current_database = None
 
@@ -277,7 +281,8 @@ class Tcd(object):
         self._header = _libtcd.get_tide_db_header()
         self.constituents = self._read_constituents()
 
-    def _pack_constituents(self, constituents):
+    @staticmethod
+    def _pack_constituents(constituents):
         start_year = max(map(attrgetter('node_factors.start_year'),
                              constituents.values()))
         end_year = min(map(attrgetter('node_factors.end_year'),
@@ -312,9 +317,6 @@ class Tcd(object):
             if name in constituents:
                 raise InvalidTcdFile("duplicate constituent name (%r)" % name)
             speed = _libtcd.get_speed(i)
-            factors = islice(
-                zip(_libtcd.get_equilibriums(i), _libtcd.get_node_factors(i)),
-                number_of_years)
             factors = (NodeFactor(eq, nf)
                        for eq, nf in zip(_libtcd.get_equilibriums(i),
                                          _libtcd.get_node_factors(i)))

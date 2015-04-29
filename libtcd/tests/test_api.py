@@ -5,6 +5,7 @@ from __future__ import absolute_import
 
 from ctypes import c_float
 import datetime
+from functools import partial
 from shutil import copyfileobj
 import tempfile
 from pkg_resources import resource_filename
@@ -132,6 +133,14 @@ def temp_tcd(request):
 
     return Tcd.open(tmpfile.name)
 
+@pytest.fixture
+def uninitialized_tcd():
+    from libtcd.api import Tcd
+    from libtcd._libtcd import DB_HEADER_PUBLIC
+    tcd = Tcd.__new__(Tcd)
+    tcd._header = DB_HEADER_PUBLIC()
+    return tcd
+
 def check_not_locked():
     from libtcd.api import _lock
     assert _lock.acquire(False)
@@ -192,12 +201,16 @@ class TestApi(object):
     def test_iter(self, test_tcd):
         stations = list(test_tcd)
         assert [s.name for s in stations] \
-               == ["Alameda, San Francisco Bay, California"] * 2
+            == ["Alameda, San Francisco Bay, California"] * 2
         assert len(stations[0].coefficients) == 32
 
     def test_find(self, test_tcd):
         s = test_tcd.find("Alameda, San Francisco Bay, California")
         assert s.record_number == 0
+
+    def test_find_raises_key_error(self, test_tcd):
+        with pytest.raises(KeyError):
+            test_tcd.find("WHere in the World, San Francisco Bay, California")
 
     def test_findall(self, temp_tcd, dummy_refstation):
         temp_tcd.append(dummy_refstation)
@@ -209,6 +222,60 @@ class TestApi(object):
         out, err = capfd.readouterr()
         assert out == ''
         assert "Alameda, San Francisco Bay, California" in err
+
+    @pytest.mark.parametrize('i', [2, -1])
+    def test_dump_tide_record_raises_index_error(self, test_tcd, i):
+        with pytest.raises(IndexError):
+            test_tcd.dump_tide_record(i)
+
+    def test_pack_constituents(self, uninitialized_tcd, dummy_constituents):
+        n, names, speeds, start_year, num_years, equilibriums, node_factors \
+            = uninitialized_tcd._pack_constituents(dummy_constituents)
+        assert n == 1
+        assert list(names) == [b'J1']
+        assert list(speeds) == [15.5854433]
+        assert start_year == 1970
+        assert num_years == 1
+        assert len(equilibriums) == 1
+        assert equilibriums[0][0] == 1.0
+        assert len(node_factors) == 1
+        assert node_factors[0][0] == 2.0
+
+    def test_pack_constituents_raises_value_error(self, uninitialized_tcd):
+        from libtcd.api import Constituent, NodeFactors, NodeFactor
+        c1 = Constituent('Foo1', 1.234,
+                         NodeFactors(1970, [NodeFactor(1.0, 2.0)]))
+        c2 = Constituent('Bar2', 2.345,
+                         NodeFactors(1971, [NodeFactor(1.0, 2.0)]))
+        constituents = {c1.name: c1, c2.name: c2}
+        with pytest.raises(ValueError):
+            uninitialized_tcd._pack_constituents(constituents)
+
+    @pytest.fixture
+    def patch_constituents(self, monkeypatch):
+        from libtcd import _libtcd
+        patch_libtcd = partial(monkeypatch.setattr, _libtcd)
+        patch_libtcd('get_constituent', lambda i: b'Foo1')
+        patch_libtcd('get_speed', lambda i: 1.234)
+        patch_libtcd('get_equilibriums', lambda i: [1.0])
+        patch_libtcd('get_node_factors', lambda i: [2.0])
+
+    def test_read_constituents(self, uninitialized_tcd, patch_constituents):
+        tcd = uninitialized_tcd
+        tcd._header.start_year = 1970
+        tcd._header.number_of_years = 1
+        tcd._header.constituents = 1
+        tcd._read_constituents()
+
+    def test_read_constituents_raises_invalid_tcd_file(
+            self, uninitialized_tcd, patch_constituents):
+        from libtcd.api import InvalidTcdFile
+        tcd = uninitialized_tcd
+        tcd._header.start_year = 1970
+        tcd._header.number_of_years = 1
+        tcd._header.constituents = 2
+        with pytest.raises(InvalidTcdFile):
+            tcd._read_constituents()
 
 @pytest.mark.parametrize("seconds,expected", [
     (0, '0:00'),
