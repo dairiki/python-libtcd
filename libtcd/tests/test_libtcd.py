@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
+# # -*- coding: utf-8 -*-
 """
 """
 from __future__ import absolute_import
 
+from ctypes import *
 from itertools import count, takewhile
 from pkg_resources import resource_filename
 from shutil import copyfileobj
@@ -10,7 +11,9 @@ import tempfile
 
 import pytest
 from six.moves import map
+from six import text_type
 
+from libtcd.compat import bytes_
 from libtcd.util import remove_if_exists
 
 TEST_TCD = resource_filename('libtcd.tests', 'test.tcd')
@@ -176,3 +179,58 @@ def test_get_next_partial_tide_record(test_tcdfile):
         headers.append(next_header)
         next_header = get_next_partial_tide_record()
     assert len(headers) == 2
+
+
+def test_open_tide_db_failure(tmpdir):
+    from libtcd import _libtcd
+    missing_tcd = text_type(tmpdir.join('missing.tcd'))
+    bmissing_tcd = bytes_(missing_tcd, _libtcd.ENCODING)
+    with pytest.raises(_libtcd.Error) as excinfo:
+        _libtcd.open_tide_db(bmissing_tcd)
+    assert 'open_tide_db failed' in excinfo.exconly()
+
+
+def test_create_tide_db_failure(tmpdir):
+    from libtcd import _libtcd
+    test_tcd = text_type(tmpdir.join('missing', 'test.tcd'))
+    btest_tcd = bytes_(test_tcd, _libtcd.ENCODING)
+    constituents = c_uint32(0)
+    constituent = pointer(c_char_p(b"Foo1"))
+    speed = (_libtcd.c_float64 * 1)(1.234)
+    start_year = c_int32(1970)
+    num_years = c_uint32(1)
+    x = (_libtcd.c_float32 * 1)(1.0)
+    equilibrium = (POINTER(_libtcd.c_float32) * 1)(x)
+    node_factor = (POINTER(_libtcd.c_float32) * 1)(x)
+    with pytest.raises(_libtcd.Error) as excinfo:
+        _libtcd.create_tide_db(btest_tcd,
+                               constituents, constituent, speed,
+                               start_year, num_years, equilibrium, node_factor)
+    assert 'create_tide_db failed' in excinfo.exconly()
+
+
+def test_add_tide_record_failure(empty_tcdfile):
+    from libtcd import _libtcd
+    header = _libtcd.get_tide_db_header()
+    _libtcd.close_tide_db()
+    rec = _libtcd.TIDE_RECORD()
+    with pytest.raises(_libtcd.Error) as excinfo:
+        _libtcd.add_tide_record(pointer(rec), header)
+    assert 'add_tide_record failed' in excinfo.exconly()
+
+
+def test_update_tide_record_failure(empty_tcdfile):
+    from libtcd import _libtcd
+    header = _libtcd.get_tide_db_header()
+    rec = _libtcd.TIDE_RECORD()
+    with pytest.raises(_libtcd.Error) as excinfo:
+        _libtcd.update_tide_record(c_int32(1), pointer(rec), header)
+    assert 'update_tide_record failed' in excinfo.exconly()
+
+
+def test_delete_tide_record_failure(empty_tcdfile):
+    from libtcd import _libtcd
+    header = _libtcd.get_tide_db_header()
+    with pytest.raises(_libtcd.Error) as excinfo:
+        _libtcd.delete_tide_record(c_int32(0), header)
+    assert 'delete_tide_record failed' in excinfo.exconly()

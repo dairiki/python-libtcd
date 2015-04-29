@@ -111,6 +111,21 @@ def _check_bool(result, func, args):
         raise Error("%s failed" % func.__name__)
     return args
 
+
+def _cfunction(name, restype, *argtypes, **kwargs):
+    paramflags = kwargs.get('paramflags')
+    errcheck = kwargs.get('errcheck')
+    type_ = CFUNCTYPE(restype, *argtypes)
+    func_spec = (name, _lib)
+    if paramflags:
+        func = type_(func_spec, paramflags)
+    else:
+        func = type_(func_spec)
+    func.__name__ = name
+    if errcheck:
+        func.errcheck = errcheck
+    return func
+
 dump_tide_record = _lib.dump_tide_record
 dump_tide_record.restype = None
 dump_tide_record.argtypes = (POINTER(TIDE_RECORD),)
@@ -138,10 +153,8 @@ for name in 'country', 'tzfile', 'restriction', 'datum', 'legalese':
     locals()['find_or_add_' + name] = _add_string_t(
         ('find_or_add_' + name, _lib), _add_string_paramflags)
 
-_get_speed_t = CFUNCTYPE(c_float64, c_int32)
-_set_speed_t = CFUNCTYPE(None, c_int32, c_float64)
-get_speed = _get_speed_t(('get_speed', _lib))
-set_speed = _set_speed_t(('set_speed', _lib))
+get_speed = _cfunction('get_speed', c_float64, c_int32)
+set_speed = _cfunction('set_speed', None, c_int32, c_float64)
 
 _get_factor_t = CFUNCTYPE(c_float32, c_int32, c_int32)
 _set_factor_t = CFUNCTYPE(None, c_int32, c_int32, c_float32)
@@ -177,19 +190,19 @@ close_tide_db = _lib.close_tide_db
 close_tide_db.restype = None
 close_tide_db.argtypes = ()
 
-_create_tide_db_t = CFUNCTYPE(
-    c_bool,
+create_tide_db = _cfunction(
+    'create_tide_db', c_bool,
     c_char_p,
     c_uint32, POINTER(c_char_p), POINTER(c_float64),
     c_int32, c_uint32,
-    POINTER(POINTER(c_float32)), POINTER(POINTER(c_float32)))
-create_tide_db = _create_tide_db_t(
-    ('create_tide_db', _lib),
-    ((1, 'file'),
-     (1, 'constituents'), (1, 'constituent'), (1, 'speed'),
-     (1, 'start_year'), (1, 'num_years'),
-     (1, 'equilibrium'), (1, 'node_factor'),))
-create_tide_db.errcheck = _check_bool
+    POINTER(POINTER(c_float32)), POINTER(POINTER(c_float32)),
+    paramflags=(
+        (1, 'file'),
+        (1, 'constituents'), (1, 'constituent'), (1, 'speed'),
+        (1, 'start_year'), (1, 'num_years'),
+        (1, 'equilibrium'), (1, 'node_factor'),
+        ),
+    errcheck=_check_bool)
 
 get_tide_db_header = _lib.get_tide_db_header
 get_tide_db_header.restype = DB_HEADER_PUBLIC
@@ -204,57 +217,54 @@ def _check_return_none_on_failure(result, func, args):
     rval = args[-1]
     return rval if success else None
 
-_get_partial_tide_record_t = CFUNCTYPE(c_bool,
-                                       c_int32, POINTER(TIDE_STATION_HEADER))
-get_partial_tide_record = _get_partial_tide_record_t(
-    ('get_partial_tide_record', _lib), ((1, 'num'), (2, 'rec')))
-get_partial_tide_record.errcheck = _check_return_none_on_failure
+get_partial_tide_record = _cfunction(
+    'get_partial_tide_record', c_bool,
+    c_int32, POINTER(TIDE_STATION_HEADER),
+    paramflags=((1, 'num'), (2, 'rec')),
+    errcheck=_check_return_none_on_failure)
 
+get_next_partial_tide_record = _cfunction(
+    'get_next_partial_tide_record', c_int32,
+    POINTER(TIDE_STATION_HEADER),
+    paramflags=((2, 'rec'),),
+    errcheck = _check_return_none_on_failure)
 
-_get_next_partial_tide_record_t = CFUNCTYPE(c_int32,
-                                            POINTER(TIDE_STATION_HEADER))
-get_next_partial_tide_record = _get_next_partial_tide_record_t(
-    ('get_next_partial_tide_record', _lib), ((2, 'rec'),))
-get_next_partial_tide_record.errcheck = _check_return_none_on_failure
+get_nearest_partial_tide_record = _cfunction(
+    'get_nearest_partial_tide_record', c_int32,
+    c_float64, c_float64,
+    POINTER(TIDE_STATION_HEADER),
+    paramflags=((1, 'lat'), (1, 'lon'), (2, 'rec')),
+    errcheck = _check_return_none_on_failure)
 
-_get_nearest_partial_tide_record_t = CFUNCTYPE(c_int32,
-                                               c_float64, c_float64,
-                                               POINTER(TIDE_STATION_HEADER))
-get_nearest_partial_tide_record = _get_nearest_partial_tide_record_t(
-    ('get_nearest_partial_tide_record', _lib),
-    ((1, 'lat'), (1, 'lon'), (2, 'rec')))
-get_nearest_partial_tide_record.errcheck = _check_return_none_on_failure
+read_tide_record = _cfunction(
+    'read_tide_record', c_int32,
+    c_int32, POINTER(TIDE_RECORD),
+    paramflags=((1, 'num'), (2, 'rec')),
+    errcheck=_check_return_none_on_failure)
 
-_read_tide_record_t = CFUNCTYPE(c_int32, c_int32, POINTER(TIDE_RECORD))
-read_tide_record = _read_tide_record_t(('read_tide_record', _lib),
-                                       ((1, 'num'), (2, 'rec')))
-read_tide_record.errcheck = _check_return_none_on_failure
+read_next_tide_record = _cfunction(
+    'read_next_tide_record', c_int32,
+    POINTER(TIDE_RECORD),
+    paramflags=((2, 'rec'),),
+    errcheck=_check_return_none_on_failure)
 
-_read_next_tide_record_t = CFUNCTYPE(c_int32, POINTER(TIDE_RECORD))
-read_next_tide_record = _read_next_tide_record_t(
-    ('read_next_tide_record', _lib),
-    ((2, 'rec'),))
-read_next_tide_record.errcheck = _check_return_none_on_failure
+add_tide_record = _cfunction(
+    'add_tide_record', c_bool,
+    POINTER(TIDE_RECORD), POINTER(DB_HEADER_PUBLIC),
+    paramflags=((1, 'rec'), (1, 'db', None)),
+    errcheck=_check_bool)
 
+update_tide_record = _cfunction(
+    'update_tide_record', c_bool,
+    c_int32, POINTER(TIDE_RECORD), POINTER(DB_HEADER_PUBLIC),
+    paramflags=((1, 'num'), (1, 'rec'), (1, 'db', None)),
+    errcheck=_check_bool)
 
-_add_tide_record_t = CFUNCTYPE(c_bool,
-                               POINTER(TIDE_RECORD), POINTER(DB_HEADER_PUBLIC))
-add_tide_record = _add_tide_record_t(('add_tide_record', _lib),
-                                     ((1, 'rec'), (1, 'db', None)))
-add_tide_record.errcheck = _check_bool
-
-_update_tide_record_t = CFUNCTYPE(c_bool,
-                                  c_int32, POINTER(TIDE_RECORD),
-                                  POINTER(DB_HEADER_PUBLIC))
-update_tide_record = _update_tide_record_t(
-    ('update_tide_record', _lib), ((1, 'num'), (1, 'rec'), (1, 'db', None)))
-update_tide_record.errcheck = _check_bool
-
-_delete_tide_record_t = CFUNCTYPE(c_bool,
-                                  c_int32, POINTER(DB_HEADER_PUBLIC))
-delete_tide_record = _delete_tide_record_t(('delete_tide_record', _lib),
-                                           ((1, 'num'), (1, 'db', None)))
-delete_tide_record.errcheck = _check_bool
+delete_tide_record = _cfunction(
+    'delete_tide_record', c_bool,
+    c_int32, POINTER(DB_HEADER_PUBLIC),
+    paramflags=((1, 'num'), (1, 'db', None)),
+    errcheck=_check_bool)
 
 infer_constituents = _lib.infer_constituents
 infer_constituents.restype = c_bool
