@@ -422,7 +422,9 @@ class _time_offset(_attr_descriptor):
     def unpack_value(tcd, packed):
         sign = 1 if packed >= 0 else -1
         hours, minutes = divmod(abs(packed), 100)
-        assert 0 <= minutes < 60        # FIXME: ValueError instead?
+        if minutes < 0 or minutes >= 60:
+            raise InvalidTcdFile(
+                "Minutes out of range in time offset %r" % packed)
         return sign * timeoffset(hours=hours, minutes=minutes)
 
     @staticmethod
@@ -497,9 +499,12 @@ class _record_type(_attr_descriptor):
     def pack(self, tcd, station):
         if isinstance(station, ReferenceStation):
             record_type = _libtcd.REFERENCE_STATION
-        else:
-            assert isinstance(station, SubordinateStation)
+        elif isinstance(station, SubordinateStation):
             record_type = _libtcd.SUBORDINATE_STATION
+        else:
+            raise TypeError(
+                "%r is neither a ReferenceStation nor SubordinateStation"
+                % station)
         yield self.name, record_type
 
 
@@ -545,7 +550,9 @@ class _coefficients(_attr_descriptor):
             if coeff is not None:
                 amplitudes[n] = coeff.amplitude
                 epochs[n] = coeff.epoch
-        assert len(coeffs) == 0     # FIXME: better diagnostics
+        if coeffs:
+            raise ValueError(
+                "Tcd file is missing constituent(s): %s" % ' '.join(coeffs))
         yield 'amplitude', amplitudes
         yield 'epoch', epochs
 
@@ -554,12 +561,14 @@ class _reference_station(_attr_descriptor):
     @staticmethod
     def unpack_value(tcd, i):
         refrec = _libtcd.read_tide_record(i)
-        assert refrec.record_type == _libtcd.REFERENCE_STATION
+        if refrec.record_type != _libtcd.REFERENCE_STATION:
+            raise InvalidTcdFile("Reference station has bad record_type")
         return _unpack_tide_record(tcd, refrec)
 
     @staticmethod
     def pack_value(tcd, refstation):
-        assert isinstance(refstation, ReferenceStation)
+        if not isinstance(refstation, ReferenceStation):
+            raise TypeError("%r is not a ReferenceStation" % refstation)
         try:
             i = tcd.index(refstation)
         except ValueError:
@@ -622,10 +631,12 @@ def _unpack_tide_record(tcd, rec):
     if rec.record_type == _libtcd.REFERENCE_STATION:
         attrs = _REFSTATION_ATTRS
         station_class = ReferenceStation
-    else:
-        assert rec.record_type == _libtcd.SUBORDINATE_STATION
+    elif rec.record_type == _libtcd.SUBORDINATE_STATION:
         attrs = _SUBSTATION_ATTRS
         station_class = SubordinateStation
+    else:
+        raise InvalidTcdFile(
+            "%r is not a valid record_type" % rec.record_type)
 
     unpack = methodcaller('unpack', tcd, rec)
     return station_class(**dict(chain.from_iterable(map(unpack, attrs))))
@@ -645,9 +656,12 @@ def _pack_tide_record(tcd, station):
     packed = _TIDE_RECORD_DEFAULTS.copy()
     if isinstance(station, ReferenceStation):
         attrs = _REFSTATION_ATTRS
-    else:
-        assert isinstance(station, SubordinateStation)
+    elif isinstance(station, SubordinateStation):
         attrs = _SUBSTATION_ATTRS
+    else:
+        raise TypeError(
+            "%r is neither a ReferenceStation nor SubordinateStation"
+            % station)
     pack = methodcaller('pack', tcd, station)
     packed.update(chain.from_iterable(map(pack, attrs)))
     return _libtcd.TIDE_RECORD(**packed)

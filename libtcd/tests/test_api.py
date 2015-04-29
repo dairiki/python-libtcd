@@ -469,7 +469,8 @@ class Test_time_offset(attr_descriptor_test_base):
         return packed, unpacked
 
     def test_unpack_bad_value(self, descriptor, tcd):
-        with pytest.raises(AssertionError):
+        from libtcd.api import InvalidTcdFile
+        with pytest.raises(InvalidTcdFile):
             descriptor.unpack_value(tcd, 60)
 
     def test_pack_value_none(self, descriptor, tcd):
@@ -542,6 +543,10 @@ class Test_record_type(attr_descriptor_test_base):
 
         assert list(descriptor.pack(tcd, refstation)) == [('record_type', 1)]
         assert list(descriptor.pack(tcd, substation)) == [('record_type', 2)]
+
+    def test_pack_raises_type_error(self, descriptor, tcd):
+        with pytest.raises(TypeError):
+            list(descriptor.pack(tcd, None))
 
 
 class Test_coordinates(attr_descriptor_test_base):
@@ -616,6 +621,21 @@ class Test_coefficients(attr_descriptor_test_base):
         assert list(result['amplitude']) == [1.5] + [0] * 254
         assert list(result['epoch']) == [42.0] + [0] * 254
 
+    def test_pack_raises_error_if_missing_constuent(
+            self, descriptor, tcd, station):
+        from libtcd.api import (
+            Coefficient,
+            Constituent,
+            NodeFactors,
+            NodeFactor)
+        constituent = Constituent('Missing1', 1.234,
+                                  NodeFactors(1970, [NodeFactor(1.0, 2.0)]))
+        station.coefficients = [
+            Coefficient(1.5, 42.0, constituent),
+            ]
+        with pytest.raises(ValueError):
+            dict(descriptor.pack(tcd, station))
+
 
 class Test_reference_station(attr_descriptor_test_base):
     @pytest.fixture
@@ -645,3 +665,36 @@ class Test_reference_station(attr_descriptor_test_base):
         result = descriptor.unpack_value(tcd, packed)
         assert result.name == unpacked.name
         assert result.record_number == unpacked.record_number
+
+    def test_unpack_value_raises_invalid_tcd_file(
+            self, descriptor, uninitialized_tcd, monkeypatch):
+        from libtcd import _libtcd
+        from libtcd.api import InvalidTcdFile
+
+        def read_tide_record(i):
+            rec = _libtcd.TIDE_RECORD()
+            rec.record_type = _libtcd.SUBORDINATE_STATION
+            return rec
+        monkeypatch.setattr(_libtcd, 'read_tide_record', read_tide_record)
+        with pytest.raises(InvalidTcdFile):
+            descriptor.unpack_value(uninitialized_tcd, 0)
+
+    def test_pack_value_raises_type_error(
+            self, descriptor, uninitialized_tcd, dummy_substation):
+        with pytest.raises(TypeError):
+            descriptor.pack_value(uninitialized_tcd, dummy_substation)
+
+
+def test_unpack_tide_record_raises_invalid_tcd_file(uninitialized_tcd):
+    from libtcd.api import _unpack_tide_record, InvalidTcdFile
+    from libtcd._libtcd import TIDE_RECORD
+    rec = TIDE_RECORD()
+    rec.record_type = 3
+    with pytest.raises(InvalidTcdFile):
+        _unpack_tide_record(uninitialized_tcd, rec)
+
+
+def test_pack_tide_record_raises_type_error(uninitialized_tcd):
+    from libtcd.api import _pack_tide_record
+    with pytest.raises(TypeError):
+        _pack_tide_record(uninitialized_tcd, None)
