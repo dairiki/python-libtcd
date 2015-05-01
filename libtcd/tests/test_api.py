@@ -175,13 +175,40 @@ class TestApi(object):
     def test_len(self, test_tcd):
         assert len(test_tcd) == 2
 
-    def test_getitem(selef, test_tcd):
+    def test_unpack_record_raises_invalid_tcd_file(self, uninitialized_tcd):
+        from ..api import InvalidTcdFile
+        from .. import _libtcd
+
+        rec = _libtcd.TIDE_RECORD(record_type=3)
+        with pytest.raises(InvalidTcdFile):
+            uninitialized_tcd._unpack_record(rec)
+
+    def test_headers_unpack_record_raises_invalid_tcd_file(
+            self, uninitialized_tcd):
+        from ..api import InvalidTcdFile
+        from .. import _libtcd
+
+        headers = uninitialized_tcd.headers
+        rec = _libtcd.TIDE_STATION_HEADER(record_type=3)
+        with pytest.raises(InvalidTcdFile):
+            headers._unpack_record(rec)
+
+    def test_getitem(self, test_tcd):
         assert test_tcd[0].name == u"Seattle, Puget Sound, Washington"
         with pytest.raises(IndexError):
             test_tcd[100000]
         with pytest.raises(IndexError):
             test_tcd[len(test_tcd)]
         assert test_tcd[-1].record_number == len(test_tcd) - 1
+
+    def test_headers_getitem(self, test_tcd):
+        headers = test_tcd.headers
+        assert headers[0].name == u"Seattle, Puget Sound, Washington"
+        with pytest.raises(IndexError):
+            headers[100000]
+        with pytest.raises(IndexError):
+            headers[len(test_tcd)]
+        assert headers[-1].record_number == len(test_tcd) - 1
 
     def test_setitem(self, temp_tcd, dummy_refstation):
         temp_tcd[1] = dummy_refstation
@@ -233,6 +260,12 @@ class TestApi(object):
         out, err = capfd.readouterr()
         assert out == ''
         assert "Seattle, Puget Sound, Washington" in err
+
+    def test_index(self, new_tcd, dummy_refstation, dummy_substation):
+        new_tcd.append(dummy_refstation)
+        new_tcd.append(dummy_substation)
+        assert new_tcd.index(dummy_refstation) == 0
+        assert new_tcd.index(dummy_substation) == 1
 
     @pytest.mark.parametrize('i', [2, -1])
     def test_dump_tide_record_raises_index_error(self, test_tcd, i):
@@ -287,6 +320,7 @@ class TestApi(object):
         tcd._header.constituents = 2
         with pytest.raises(InvalidTcdFile):
             tcd._read_constituents()
+
 
 
 @pytest.mark.parametrize("seconds,expected", [
@@ -661,14 +695,9 @@ class Test_reference_station(attr_descriptor_test_base):
         assert refstation.name == unpacked.name
         assert refstation.record_number == unpacked.record_number
 
-    def test_unpack_value(self, descriptor, tcd, values):
-        packed, unpacked = values
-        result = descriptor.unpack_value(tcd, packed)
-        assert result.name == unpacked.name
-        assert result.record_number == unpacked.record_number
-
-    def test_unpack_value_raises_invalid_tcd_file(
-            self, descriptor, uninitialized_tcd, monkeypatch):
+    def test_unpack_raises_invalid_tcd_file(self,
+                                            descriptor, tcd, rec,
+                                            monkeypatch):
         from libtcd import _libtcd
         from libtcd.api import InvalidTcdFile
 
@@ -678,24 +707,14 @@ class Test_reference_station(attr_descriptor_test_base):
             return rec
         monkeypatch.setattr(_libtcd, 'read_tide_record', read_tide_record)
         with pytest.raises(InvalidTcdFile):
-            descriptor.unpack_value(uninitialized_tcd, 0)
+            for name, packed in descriptor.unpack(tcd, rec):
+                pass            # pragma: NO COVER
+
+    def test_unpack_value(self, descriptor, tcd, rec):
+        with pytest.raises(NotImplementedError):
+            descriptor.unpack_value(tcd, rec)
 
     def test_pack_value_raises_type_error(
             self, descriptor, uninitialized_tcd, dummy_substation):
         with pytest.raises(TypeError):
             descriptor.pack_value(uninitialized_tcd, dummy_substation)
-
-
-def test_unpack_tide_record_raises_invalid_tcd_file(uninitialized_tcd):
-    from libtcd.api import _unpack_tide_record, InvalidTcdFile
-    from libtcd._libtcd import TIDE_RECORD
-    rec = TIDE_RECORD()
-    rec.record_type = 3
-    with pytest.raises(InvalidTcdFile):
-        _unpack_tide_record(uninitialized_tcd, rec)
-
-
-def test_pack_tide_record_raises_type_error(uninitialized_tcd):
-    from libtcd.api import _pack_tide_record
-    with pytest.raises(TypeError):
-        _pack_tide_record(uninitialized_tcd, None)
