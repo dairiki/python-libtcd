@@ -214,13 +214,13 @@ class Tcd(object):
             i += len(self)
         with self:
             rec = _libtcd.read_tide_record(i)
-            if rec is None:
-                raise IndexError(i)
-            return _unpack_tide_record(self, rec)
+        if rec is None:
+            raise IndexError(i)
+        return _unpack_tide_record(self, rec)
 
     def __setitem__(self, i, station):
+        rec = _pack_tide_record(self, station)
         with self:
-            rec = _pack_tide_record(self, station)
             _libtcd.update_tide_record(i, rec, self._header)
 
     def __delitem__(self, i):
@@ -228,12 +228,15 @@ class Tcd(object):
             _libtcd.delete_tide_record(i, self._header)
 
     def append(self, station):
-        with self:
-            self._append(station)
+        """ Append station to database.
 
-    def _append(self, station):
+        Returns the index of the appended station.
+
+        """
         rec = _pack_tide_record(self, station)
-        _libtcd.add_tide_record(rec, self._header)
+        with self:
+            _libtcd.add_tide_record(rec, self._header)
+            return self._header.number_of_records - 1
 
     def find(self, name):
         with self:
@@ -241,12 +244,13 @@ class Tcd(object):
             if i < 0:
                 raise KeyError(name)
             rec = _libtcd.read_tide_record(i)
-            return _unpack_tide_record(self, rec)
+        return _unpack_tide_record(self, rec)
 
     def findall(self, name):
         bname = bytes_(name, _libtcd.ENCODING)
-        return [_unpack_tide_record(self, rec)
-                for rec in self._find_recs(bname)]
+        with self:
+            records = list(self._find_recs(bname))
+        return [_unpack_tide_record(self, rec) for rec in records]
 
     def _find_recs(self, name):
         _libtcd.search_station(b"")     # reset search (I hope)
@@ -260,9 +264,10 @@ class Tcd(object):
 
     def index(self, station):
         target = _pack_tide_record(self, station)
-        for rec in self._find_recs(target.name):
-            if self.records_match(rec, target):
-                return rec.record_number
+        with self:
+            for rec in self._find_recs(target.name):
+                if self.records_match(rec, target):
+                    return rec.record_number
         raise ValueError("Station %r not found" % station.name)
 
     @staticmethod
@@ -567,8 +572,7 @@ class _reference_station(_attr_descriptor):
         try:
             i = tcd.index(refstation)
         except ValueError:
-            tcd._append(refstation)
-            i = len(tcd) - 1
+            i = tcd.append(refstation)
         return i
 
 _COMMON_ATTRS = [
