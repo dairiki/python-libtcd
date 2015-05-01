@@ -19,6 +19,7 @@ from libtcd.util import remove_if_exists
 
 # FIXME: to move
 
+
 class TestNodeFactors(object):
     def make_one(self, start_year, node_factors):
         from libtcd.api import NodeFactors
@@ -55,6 +56,7 @@ class TestNodeFactors(object):
         with pytest.raises(KeyError):
             test_factors[1971]
 
+
 class TestStationHeader(object):
     def make_one(self, *args, **kwargs):
         from libtcd.api import StationHeader
@@ -64,17 +66,11 @@ class TestStationHeader(object):
         header = self.make_one('Testing')
         assert header.tzfile == u'Unknown'
 
-    def test_callable_default(self, monkeypatch):
-        from libtcd.api import StationHeader
-        monkeypatch.setattr(StationHeader, '_attributes', [
-            ('test_attr', lambda: 'test value'),
-            ])
-        header = self.make_one('Testing')
-        assert header.test_attr == 'test value'
-
-    def test_bad_kw(self):
+    @pytest.mark.parametrize('attr', ['badkw', '__init__'])
+    def test_bad_kw(self, attr):
+        kwargs = {attr: 'foo'}
         with pytest.raises(TypeError):
-            self.make_one('Testing', badkw=u'foo')
+            self.make_one('Testing', **kwargs)
 
     def test_repr(self):
         header = self.make_one('Testing')

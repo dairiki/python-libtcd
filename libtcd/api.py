@@ -16,7 +16,7 @@ from six.moves import range, zip
 
 from . import _libtcd
 from .compat import bytes_, OrderedDict
-from .util import timedelta_total_minutes
+from .util import reify, timedelta_total_minutes
 
 Constituent = namedtuple('Constituent', ['name', 'speed', 'node_factors'])
 
@@ -54,29 +54,18 @@ Coefficient = namedtuple('Coefficient', ['amplitude', 'epoch', 'constituent'])
 
 
 class StationHeader(object):
-    _attributes = [
-        ('record_number', None),
-        ('latitude', None),
-        ('longitude', None),
-        ('tzfile', u'Unknown'),
-        ]
-
-    @classmethod
-    def _attrs(cls):
-        return chain.from_iterable(
-            c.__dict__.get('_attributes', ()) for c in cls.__mro__)
+    record_number = None
+    latitude = None
+    longitude = None
+    tzfile = u'Unknown'
 
     def __init__(self, name, **kwargs):
         self.name = name
-        for key, dflt in self._attrs():
-            try:
-                value = kwargs.pop(key)
-            except KeyError:
-                value = dflt() if callable(dflt) else dflt
-            setattr(self, key, value)
-        for key in kwargs:
-            raise TypeError(
-                "__init__() got an unexpected keyword argument %r", key)
+        for attr in kwargs:
+            if attr.startswith('_') or not hasattr(self, attr):
+                raise TypeError(
+                    "__init__() got an unexpected keyword argument %r", attr)
+        self.__dict__.update(kwargs)
 
     def __repr__(self):
         return "<{0.__class__.__name__}: {0.name}>".format(self)
@@ -87,43 +76,39 @@ class ReferenceStationHeader(StationHeader):
 
 
 class SubordinateStationHeader(StationHeader):
-    def __init__(self,
-                 name,
-                 reference_station,
-                 **kwargs):
+    def __init__(self, name, reference_station, **kwargs):
         super(SubordinateStationHeader, self).__init__(name, **kwargs)
         self.reference_station = reference_station
 
 
 class Station(StationHeader):
-    _attributes = [
-        ('country', u'Unknown'),
-        ('source', None),
-        ('restriction', u'Non-commercial use only'),
-        ('comments', None),
-        ('notes', u''),
-        ('legalese', None),
-        ('station_id_context', None),
-        ('station_id', None),
-        ('date_imported', None),
-        ('xfields', OrderedDict),
-        ('direction_units', None),  # XXX: or should default be u'Unknown'?
-        ('min_direction', None),
-        ('max_direction', None),
-        ('level_units', u'Unknown'),
-        ]
+    country = u'Unknown'
+    source = None
+    restriction = u'Non-commercial use only'
+    comments = None
+    notes = u''
+    legalese = None
+    station_id_context = None
+    station_id = None
+    date_imported = None
+    direction_units = None  # XXX: or should default be u'Unknown'?
+    min_direction = None
+    max_direction = None
+    level_units = u'Unknown'
+
+    @reify
+    def xfields(self):
+        return OrderedDict()
 
 
 class ReferenceStation(ReferenceStationHeader, Station):
-    _attributes = [
-        ('datum_offset', 0.0),
-        ('datum', u'Unknown'),
-        ('zone_offset', datetime.timedelta(0)),
-        ('expiration_date', None),
-        ('months_on_station', 0),
-        ('last_date_on_station', None),
-        ('confidence', 9),
-        ]
+    datum_offset = 0.0
+    datum = u'Unknown'
+    zone_offset = datetime.timedelta(0)
+    expiration_date = None
+    months_on_station = 0
+    last_date_on_station = None
+    confidence = 9
 
     def __init__(self, name, coefficients, **kw):
         super(ReferenceStation, self).__init__(name, **kw)
@@ -131,16 +116,14 @@ class ReferenceStation(ReferenceStationHeader, Station):
 
 
 class SubordinateStation(SubordinateStationHeader, Station):
-    _attributes = [
-        ('min_time_add', None),     # XXX: or timedelta(0)?
-        ('min_level_add', 0.0),
-        ('min_level_multiply', None),
-        ('max_time_add', None),
-        ('max_level_add', 0.0),
-        ('max_level_multiply', None),
-        ('flood_begins', None),
-        ('ebb_begins', None),
-        ]
+    min_time_add = None         # XXX: or timedelta(0)?
+    min_level_add = 0.0
+    min_level_multiply = None
+    max_time_add = None
+    max_level_add = 0.0
+    max_level_multiply = None
+    flood_begins = None
+    ebb_begins = None
 
 
 class InvalidTcdFile(Exception):
