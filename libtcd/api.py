@@ -155,7 +155,78 @@ def get_current_database():
     return _current_database
 
 
-class Tcd(object):
+class _SequenceBase(object):
+    def __len__(self):          # pragma: NO COVER
+        raise NotImplementedError()
+
+    def _get_record(self, i):   # pragma: NO COVER
+        raise NotImplementedError()
+
+    def _unpack_record(self, rec):  # pragma: NO COVER
+        raise NotImplementedError()
+
+    def __iter__(self):
+        try:
+            for i in count():
+                yield self[i]
+        except IndexError:
+            pass
+
+    def __getitem__(self, i):
+        if i < 0:
+            i += len(self)
+        with self:
+            rec = self._get_record(i)
+        if rec is None:
+            raise IndexError(i)
+        return self._unpack_record(rec)
+
+    def find(self, name):
+        bname = bytes_(name, _libtcd.ENCODING)
+        with self:
+            i = _libtcd.find_station(bname)
+            if i < 0:
+                raise KeyError(name)
+            rec = self._get_record(i)
+        return self._unpack_record(rec)
+
+    def findall(self, name):
+        bname = bytes_(name, _libtcd.ENCODING)
+        with self:
+            records = self._find_recs(bname)
+        return map(self._unpack_record, records)
+
+    def _find_recs(self, name):
+        _libtcd.search_station(b"")     # reset search (I hope)
+        matches = []
+        while True:
+            i = _libtcd.search_station(name)
+            if i < 0:
+                break
+            rec = self._get_record(i)
+            if rec.name == name:
+                matches.append(rec)
+        return matches
+
+    def index(self, station):
+        # FIXME: does this work with header?
+        target = _pack_tide_record(self, station)
+        with self:
+            records = self._find_recs(target.name)
+        for rec in records:
+            if self.records_match(rec, target):
+                return rec.record_number
+        raise ValueError("Station %r not found" % station.name)
+
+    @staticmethod
+    def records_match(s1, s2):
+        # XXX: should make this more paranoid?
+        def key(rec):
+            return rec.record_type, rec.name
+        return key(s1) == key(s2)
+
+
+class Tcd(_SequenceBase):
 
     def __init__(self, filename, constituents):
         global _current_database
@@ -199,23 +270,17 @@ class Tcd(object):
                 _libtcd.close_tide_db()
                 _current_database = None
 
+    @property
+    def headers(self):
+        return TcdHeaders(self)
+
     def __len__(self):
         return self._header.number_of_records
 
-    def __iter__(self):
-        try:
-            for i in count():
-                yield self[i]
-        except IndexError:
-            pass
+    def _get_record(self, i):
+        return _libtcd.read_tide_record(i)
 
-    def __getitem__(self, i):
-        if i < 0:
-            i += len(self)
-        with self:
-            rec = _libtcd.read_tide_record(i)
-        if rec is None:
-            raise IndexError(i)
+    def _unpack_record(self, rec):
         return _unpack_tide_record(self, rec)
 
     def __setitem__(self, i, station):
@@ -237,45 +302,6 @@ class Tcd(object):
         with self:
             _libtcd.add_tide_record(rec, self._header)
             return self._header.number_of_records - 1
-
-    def find(self, name):
-        with self:
-            i = _libtcd.find_station(bytes_(name, _libtcd.ENCODING))
-            if i < 0:
-                raise KeyError(name)
-            rec = _libtcd.read_tide_record(i)
-        return _unpack_tide_record(self, rec)
-
-    def findall(self, name):
-        bname = bytes_(name, _libtcd.ENCODING)
-        with self:
-            records = list(self._find_recs(bname))
-        return [_unpack_tide_record(self, rec) for rec in records]
-
-    def _find_recs(self, name):
-        _libtcd.search_station(b"")     # reset search (I hope)
-        while True:
-            i = _libtcd.search_station(name)
-            if i < 0:
-                break
-            rec = _libtcd.read_tide_record(i)
-            if rec.name == name:
-                yield rec
-
-    def index(self, station):
-        target = _pack_tide_record(self, station)
-        with self:
-            for rec in self._find_recs(target.name):
-                if self.records_match(rec, target):
-                    return rec.record_number
-        raise ValueError("Station %r not found" % station.name)
-
-    @staticmethod
-    def records_match(s1, s2):
-        # XXX: should make this more paranoid?
-        def key(rec):
-            return rec.record_type, rec.name
-        return key(s1) == key(s2)
 
     def dump_tide_record(self, i):
         """ Dump tide record to stderr (Debugging only.)
@@ -333,6 +359,22 @@ class Tcd(object):
             node_factors = NodeFactors(start_year, factors)
             constituents[name] = Constituent(name, speed, node_factors)
         return constituents
+
+
+class TcdHeaders(_SequenceBase):
+    def __init__(self, tcd):
+        self.tcd = tcd
+        self.__enter__ = tcd.__enter__
+        self.__exit__ = tcd.__exit__
+
+    def __len__(self):
+        return len(self.tcd)
+
+    def _get_record(self, i):
+        return _libtcd.get_partial_tide_record(i)
+
+    def _unpack_record(self, rec):
+        return _unpack_tide_record(self.tcd, rec)
 
 
 _marker = object()
