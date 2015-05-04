@@ -3,9 +3,25 @@
 """
 from __future__ import absolute_import
 
-from ctypes import *
+from ctypes import (
+    c_bool,
+    c_char,
+    c_char_p,
+    c_double,
+    c_float,
+    c_int16,
+    c_int32,
+    c_uint8,
+    c_uint16,
+    c_uint32,
+    cdll,
+    sizeof,
+    Structure,
+    CFUNCTYPE,
+    POINTER,
+    )
 
-ENCODING = 'iso-8859-1'                 # all strings encoded iso-8859-1
+ENCODING = 'iso-8859-1'         # all strings encoded iso-8859-1
 
 assert sizeof(c_float) == 4
 c_float32 = c_float
@@ -112,101 +128,98 @@ def _check_bool(result, func, args):
     return args
 
 
-def _cfunction(name, restype, *argtypes, **kwargs):
-    paramflags = kwargs.get('paramflags')
+_marker = object()
+
+
+class _Param(object):
+    """ Marker for parameter types. """
+    direction_flag = 1          # input parameter, by default
+
+    def __init__(self, typ, name=None, default=_marker):
+        self.typ = typ
+        if default is not _marker:
+            self.paramflag = (self.direction_flag, name, default)
+        elif name:
+            self.paramflag = (self.direction_flag, name)
+        else:
+            self.paramflag = (self.direction_flag,)
+
+
+class _OutputParam(_Param):
+    direction_flag = 2          # output parameter
+
+
+def _to_param(param_or_type):
+    if isinstance(param_or_type, _Param):
+        return param_or_type
+    return _Param(param_or_type)
+
+
+def _declare(name, *params, **kwargs):
+    params = list(map(_to_param, params))
+    argtypes = tuple(param.typ for param in params)
+    paramflags = tuple(param.paramflag for param in params)
+    restype = kwargs.get('restype')
     errcheck = kwargs.get('errcheck')
-    type_ = CFUNCTYPE(restype, *argtypes)
-    func_spec = (name, _lib)
-    if paramflags:
-        func = type_(func_spec, paramflags)
-    else:
-        func = type_(func_spec)
+    func = CFUNCTYPE(restype, *argtypes)((name, _lib), paramflags)
     func.__name__ = name
     if errcheck:
         func.errcheck = errcheck
-    return func
+    globals()[name] = func
 
-dump_tide_record = _lib.dump_tide_record
-dump_tide_record.restype = None
-dump_tide_record.argtypes = (POINTER(TIDE_RECORD),)
+_declare('dump_tide_record', _Param(POINTER(TIDE_RECORD), 'rec'))
 
 # String tables
-_get_string_t = CFUNCTYPE(c_char_p, c_int32)
-_find_string_t = CFUNCTYPE(c_int32, c_char_p)
-for name in ('country',
-             'tzfile',
-             'level_units',
-             'dir_units',
-             'restriction',
-             'datum',
-             'legalese',
-             'constituent',
-             'station'):
-    locals()['get_' + name] = _get_string_t(('get_' + name, _lib))
-    locals()['find_' + name] = _find_string_t(('find_' + name, _lib))
+for _name in ('country',
+              'tzfile',
+              'level_units',
+              'dir_units',
+              'restriction',
+              'datum',
+              'legalese',
+              'constituent',
+              'station'):
+    _declare('get_' + _name, c_int32, restype=c_char_p)
+    _declare('find_' + _name, c_char_p, restype=c_int32)
+for _name in 'country', 'tzfile', 'restriction', 'datum', 'legalese':
+    for _pfx in ('add_', 'find_or_add_'):
+        _declare(_pfx + _name,
+                 _Param(c_char_p, 'name'),
+                 _Param(POINTER(DB_HEADER_PUBLIC), 'db', default=None),
+                 restype=c_int32)
 
-_add_string_t = CFUNCTYPE(c_int32, c_char_p, POINTER(DB_HEADER_PUBLIC))
-_add_string_paramflags = ((1, 'name'), (1, 'db', None))
-for name in 'country', 'tzfile', 'restriction', 'datum', 'legalese':
-    locals()['add_' + name] = _add_string_t(
-        ('add_' + name, _lib), _add_string_paramflags)
-    locals()['find_or_add_' + name] = _add_string_t(
-        ('find_or_add_' + name, _lib), _add_string_paramflags)
+_declare('get_speed', c_int32, restype=c_float64)
+_declare('set_speed', c_int32, c_float64)
 
-get_speed = _cfunction('get_speed', c_float64, c_int32)
-set_speed = _cfunction('set_speed', None, c_int32, c_float64)
+_declare('get_equilibrium', c_int32, c_int32, restype=c_float32)
+_declare('set_equilibrium', c_int32, c_int32, c_float32)
+_declare('get_node_factor', c_int32, c_int32, restype=c_float32)
+_declare('set_node_factor', c_int32, c_int32, c_float32)
 
-_get_factor_t = CFUNCTYPE(c_float32, c_int32, c_int32)
-_set_factor_t = CFUNCTYPE(None, c_int32, c_int32, c_float32)
-get_equilibrium = _get_factor_t(('get_equilibrium', _lib))
-set_equilibrium = _set_factor_t(('set_equilibrium', _lib))
-get_node_factor = _get_factor_t(('get_node_factor', _lib))
-set_node_factor = _set_factor_t(('set_node_factor', _lib))
+_declare('get_equilibriums', c_int32, restype=POINTER(c_float32))
+_declare('get_node_factors', c_int32, restype=POINTER(c_float32))
 
-_get_factors_t = CFUNCTYPE(POINTER(c_float32), c_int32)
-get_equilibriums = _get_factors_t(('get_equilibriums', _lib))
-get_node_factors = _get_factors_t(('get_node_factors', _lib))
+_declare('get_time', c_char_p, restype=c_int32)
+_declare('ret_time', c_int32, restype=c_char_p)
+_declare('ret_time_neat', c_int32, restype=c_char_p)
+_declare('ret_date', c_uint32, restype=c_char_p)
 
-_get_time_t = CFUNCTYPE(c_int32, c_char_p)
-get_time = _get_time_t(('get_time', _lib))
+_declare('search_station', c_char_p, restype=c_int32)
 
-_ret_time_t = CFUNCTYPE(c_char_p, c_int32)
-ret_time = _ret_time_t(('ret_time', _lib))
-ret_time_neat = _ret_time_t(('ret_time_neat', _lib))
+_declare('open_tide_db', c_char_p, restype=c_bool, errcheck=_check_bool)
+_declare('close_tide_db')
+_declare('create_tide_db',
+         _Param(c_char_p, 'file'),
+         _Param(c_uint32, 'constituents'),
+         _Param(POINTER(c_char_p), 'constituent'),
+         _Param(POINTER(c_float64), 'speed'),
+         _Param(c_int32, 'start_year'),
+         _Param(c_uint32, 'num_years'),
+         _Param(POINTER(POINTER(c_float32)), 'equilibrium'),
+         _Param(POINTER(POINTER(c_float32)), 'node_factor'),
+         restype=c_bool, errcheck=_check_bool)
 
-_ret_date_t = CFUNCTYPE(c_char_p, c_uint32)
-ret_date = _ret_date_t(('ret_date', _lib))
-
-_search_station_t = CFUNCTYPE(c_int32, c_char_p)
-search_station = _search_station_t(('search_station', _lib))
-
-
-open_tide_db = _lib.open_tide_db
-open_tide_db.restype = c_bool
-open_tide_db.argtypes = (c_char_p,)
-open_tide_db.errcheck = _check_bool
-
-close_tide_db = _lib.close_tide_db
-close_tide_db.restype = None
-close_tide_db.argtypes = ()
-
-create_tide_db = _cfunction(
-    'create_tide_db', c_bool,
-    c_char_p,
-    c_uint32, POINTER(c_char_p), POINTER(c_float64),
-    c_int32, c_uint32,
-    POINTER(POINTER(c_float32)), POINTER(POINTER(c_float32)),
-    paramflags=(
-        (1, 'file'),
-        (1, 'constituents'), (1, 'constituent'), (1, 'speed'),
-        (1, 'start_year'), (1, 'num_years'),
-        (1, 'equilibrium'), (1, 'node_factor'),
-        ),
-    errcheck=_check_bool)
-
-get_tide_db_header = _lib.get_tide_db_header
-get_tide_db_header.restype = DB_HEADER_PUBLIC
-get_tide_db_header.argtypes = ()
+_declare('get_tide_db_header', restype=DB_HEADER_PUBLIC)
 
 
 def _check_return_none_on_failure(result, func, args):
@@ -217,56 +230,40 @@ def _check_return_none_on_failure(result, func, args):
     rval = args[-1]
     return rval if success else None
 
-get_partial_tide_record = _cfunction(
-    'get_partial_tide_record', c_bool,
-    c_int32, POINTER(TIDE_STATION_HEADER),
-    paramflags=((1, 'num'), (2, 'rec')),
-    errcheck=_check_return_none_on_failure)
+_declare('get_partial_tide_record',
+         _Param(c_int32, 'num'),
+         _OutputParam(POINTER(TIDE_STATION_HEADER)),
+         restype=c_bool, errcheck=_check_return_none_on_failure)
+_declare('get_next_partial_tide_record',
+         _OutputParam(POINTER(TIDE_STATION_HEADER)),
+         restype=c_int32, errcheck=_check_return_none_on_failure)
+_declare('get_nearest_partial_tide_record',
+         _Param(c_float64, 'lat'),
+         _Param(c_float64, 'lon'),
+         _OutputParam(POINTER(TIDE_STATION_HEADER)),
+         restype=c_int32, errcheck=_check_return_none_on_failure)
 
-get_next_partial_tide_record = _cfunction(
-    'get_next_partial_tide_record', c_int32,
-    POINTER(TIDE_STATION_HEADER),
-    paramflags=((2, 'rec'),),
-    errcheck = _check_return_none_on_failure)
+_declare('read_tide_record',
+         _Param(c_int32, 'num'),
+         _OutputParam(POINTER(TIDE_RECORD)),
+         restype=c_int32, errcheck=_check_return_none_on_failure)
+_declare('read_next_tide_record',
+         _OutputParam(POINTER(TIDE_RECORD)),
+         restype=c_int32, errcheck=_check_return_none_on_failure)
+_declare('add_tide_record',
+         _Param(POINTER(TIDE_RECORD), 'rec'),
+         _Param(POINTER(DB_HEADER_PUBLIC), 'db', default=None),
+         restype=c_bool, errcheck=_check_bool)
+_declare('update_tide_record',
+         _Param(c_int32, 'num'),
+         _Param(POINTER(TIDE_RECORD), 'rec'),
+         _Param(POINTER(DB_HEADER_PUBLIC), 'db', default=None),
+         restype=c_bool, errcheck=_check_bool)
+_declare('delete_tide_record',
+         _Param(c_int32, 'num'),
+         _Param(POINTER(DB_HEADER_PUBLIC), 'db', default=None),
+         restype=c_bool, errcheck=_check_bool)
 
-get_nearest_partial_tide_record = _cfunction(
-    'get_nearest_partial_tide_record', c_int32,
-    c_float64, c_float64,
-    POINTER(TIDE_STATION_HEADER),
-    paramflags=((1, 'lat'), (1, 'lon'), (2, 'rec')),
-    errcheck = _check_return_none_on_failure)
-
-read_tide_record = _cfunction(
-    'read_tide_record', c_int32,
-    c_int32, POINTER(TIDE_RECORD),
-    paramflags=((1, 'num'), (2, 'rec')),
-    errcheck=_check_return_none_on_failure)
-
-read_next_tide_record = _cfunction(
-    'read_next_tide_record', c_int32,
-    POINTER(TIDE_RECORD),
-    paramflags=((2, 'rec'),),
-    errcheck=_check_return_none_on_failure)
-
-add_tide_record = _cfunction(
-    'add_tide_record', c_bool,
-    POINTER(TIDE_RECORD), POINTER(DB_HEADER_PUBLIC),
-    paramflags=((1, 'rec'), (1, 'db', None)),
-    errcheck=_check_bool)
-
-update_tide_record = _cfunction(
-    'update_tide_record', c_bool,
-    c_int32, POINTER(TIDE_RECORD), POINTER(DB_HEADER_PUBLIC),
-    paramflags=((1, 'num'), (1, 'rec'), (1, 'db', None)),
-    errcheck=_check_bool)
-
-delete_tide_record = _cfunction(
-    'delete_tide_record', c_bool,
-    c_int32, POINTER(DB_HEADER_PUBLIC),
-    paramflags=((1, 'num'), (1, 'db', None)),
-    errcheck=_check_bool)
-
-infer_constituents = _lib.infer_constituents
-infer_constituents.restype = c_bool
-infer_constituents.argtypes = (POINTER(TIDE_RECORD),)
-infer_constituents.errcheck = _check_bool
+_declare('infer_constituents',
+         POINTER(TIDE_RECORD),
+         restype=c_bool, errcheck=_check_bool)
