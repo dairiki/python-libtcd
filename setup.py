@@ -5,7 +5,7 @@ import sys
 from setuptools import setup, find_packages
 from setuptools.command.test import test as TestCommand
 
-VERSION = '0.1.dev0'
+VERSION = '0.1a1'
 
 here = os.path.abspath(os.path.dirname(__file__))
 README = open(os.path.join(here, 'README.rst')).read()
@@ -57,7 +57,7 @@ setup(name='libtcd',
       author='Jeff Dairiki',
       author_email='dairiki@dairiki.org',
       url='https://github.com/dairiki/python-libtcd',
-      keywords='xtide',
+      keywords='xtide tides tidal currents',
 
       cmdclass={'test': PyTest},
 
