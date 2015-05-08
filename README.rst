@@ -1,6 +1,6 @@
-##########################
-Python Bindings for Libtcd
-##########################
+#########################################
+Python Bindings for Libtcd |build status|
+#########################################
 
 ************
 Introduction
@@ -38,3 +38,7 @@ Jeff Dairiki <dairiki@dairiki.org>
 .. _ctypes: https://docs.python.org/library/ctypes.html
 .. _xtide: http://xtide.org/xtide/
 .. _libtcd: http://xtide.org/xtide/libtcd.html
+
+.. |build status| image::
+    https://travis-ci.org/dairiki/python-libtcd.svg?branch=master
+    :target: https://travis-ci.org/dairiki/python-libtcd
