@@ -695,8 +695,6 @@ class Tcd(_SequenceMixin):
 class TcdHeaders(_SequenceMixin):
     def __init__(self, tcd):
         self.tcd = tcd
-        self.__enter__ = tcd.__enter__
-        self.__exit__ = tcd.__exit__
 
     def __enter__(self):
         return self.tcd.__enter__()
